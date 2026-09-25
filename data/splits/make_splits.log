@@ -1,0 +1,18 @@
+wrote 6 ID lists to /Users/sreethanubhuvaneshgk/projects/ber/data/splits
+
+holdout rate by country (target 20%)
+| country | S1 entities | train | val | val % |
+|---|---|---|---|---|
+| India | 883,188 | 706,901 | 176,287 | 19.96 |
+| US | 1,323,633 | 1,059,554 | 264,079 | 19.95 |
+| ALL | 2,206,821 | 1,766,455 | 440,366 | 19.95 |
+
+per split (EDA: 5.58% singletons, 3.67 mean matches for matched entities)
+| split | S1 entities | singleton % | mean matches (matched) |
+|---|---|---|---|
+| train_ids | 1,766,455 | 5.60 | 3.667 |
+| val_ids | 440,366 | 5.53 | 3.664 |
+| fold_india_train | 706,901 | 5.60 | 3.670 |
+| fold_india_val | 176,287 | 5.54 | 3.667 |
+| fold_us_train | 1,059,554 | 5.60 | 3.664 |
+| fold_us_val | 264,079 | 5.52 | 3.661 |

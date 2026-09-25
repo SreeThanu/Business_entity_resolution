@@ -1,0 +1,37 @@
+[fresh] test/test_source1.tsv: 3d4a32c54c2ca9c53fd7c2be105bf26f708f94c4d2f88eb370972a195665c2f5
+[fresh] test/test_source2.tsv: 79d906c7497af2ace70aa277f6e334a652094909de99bd6c57b53420b6a7b2dd
+[fresh] test/test_source3.tsv: 850942b11d2a4343486ed0834e28bce9f3b385f3fd497fd60ccf4ea3b8bda035
+[fresh] train/train_ground_truth.tsv: 70bc1d8a16c667e0155c2105d0ab2ebe41d7e7a85d8a529e3ca81c6c3a5af037
+[fresh] train/train_source1.tsv: 591af0e1dfeb65cab71ea6ee8cb69df00f92d6ba6fa79e05746c938775d14973
+[fresh] train/train_source2.tsv: 6336c1a055eec79cf8a6d99fdc8d32a2e4d9dc2662e00963cb35d66b89ed09ed
+[fresh] train/train_source3.tsv: 67da22f5151898ff3006febd836c1a159e97ae95efa7257a5aff4fda685e58e9
+[old] test/test_source1.tsv: 3d4a32c54c2ca9c53fd7c2be105bf26f708f94c4d2f88eb370972a195665c2f5
+[old] test/test_source2.tsv: 79d906c7497af2ace70aa277f6e334a652094909de99bd6c57b53420b6a7b2dd
+[old] test/test_source3.tsv: 850942b11d2a4343486ed0834e28bce9f3b385f3fd497fd60ccf4ea3b8bda035
+[old] train/train_ground_truth.tsv: 70bc1d8a16c667e0155c2105d0ab2ebe41d7e7a85d8a529e3ca81c6c3a5af037
+[old] train/train_source1.tsv: 591af0e1dfeb65cab71ea6ee8cb69df00f92d6ba6fa79e05746c938775d14973
+[old] train/train_source2.tsv: 6336c1a055eec79cf8a6d99fdc8d32a2e4d9dc2662e00963cb35d66b89ed09ed
+[old] train/train_source3.tsv: 67da22f5151898ff3006febd836c1a159e97ae95efa7257a5aff4fda685e58e9
+
+| file | fresh sha256 | old sha256 | result |
+|---|---|---|---|
+| test/test_source1.tsv | 3d4a32c54c2ca9c5… | 3d4a32c54c2ca9c5… | MATCH |
+| test/test_source2.tsv | 79d906c7497af2ac… | 79d906c7497af2ac… | MATCH |
+| test/test_source3.tsv | 850942b11d2a4343… | 850942b11d2a4343… | MATCH |
+| train/train_ground_truth.tsv | 70bc1d8a16c667e0… | 70bc1d8a16c667e0… | MATCH |
+| train/train_source1.tsv | 591af0e1dfeb65ca… | 591af0e1dfeb65ca… | MATCH |
+| train/train_source2.tsv | 6336c1a055eec79c… | 6336c1a055eec79c… | MATCH |
+| train/train_source3.tsv | 67da22f5151898ff… | 67da22f5151898ff… | MATCH |
+
+compared=7 differ=0
+
+| file | data_rows | bad_field_lines | utf8_error_lines |
+|---|---|---|---|
+| test_source1.tsv | 1,732,544 | 0 | 0 |
+| test_source2.tsv | 4,887,273 | 0 | 0 |
+| test_source3.tsv | 5,082,316 | 0 | 0 |
+| train_ground_truth.tsv | 2,206,821 | 0 | 0 |
+| train_source1.tsv | 2,206,821 | 0 | 0 |
+| train_source2.tsv | 5,034,616 | 0 | 0 |
+| train_source3.tsv | 5,285,603 | 0 | 0 |
+format OK
