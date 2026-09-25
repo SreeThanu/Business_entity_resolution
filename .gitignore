@@ -1,0 +1,32 @@
+# Raw and derived data (never committed)
+data_raw/
+data/*
+!data/splits/
+data/splits/*
+!data/splits/SPLITS.md
+!data/splits/splits.sha256
+!data/splits/make_splits.log
+
+# checksums/ IS committed (*.sha256 + check_raw.log): reference hashes for the raw dataset.
+
+# Large artifacts
+*.parquet
+*.tsv
+*.csv
+*.zip
+*.npz
+*.npy
+*.pkl
+*.joblib
+*.pt
+*.bin
+*.faiss
+output/*
+!output/.gitkeep
+
+# Python / OS
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
