@@ -311,8 +311,9 @@ def test_empty_address_is_null(address):
     ("87th Street, 2Nd Floor, 12 Park Ave", "12", None),
     ("2Nd Floor, 1-11-251/1B, Hyderabad", "1-11-251/1b", None),
     # India S2/S3 injected leading clause: skipped when another candidate exists
-    ("Door No 709 Block No 3 Flat No 3 Krupa", "3", "3"),
-    ("Block No 3 Flat No 3 Krupa, Pune", "3", "3"),
+    ("Door No 709 Block No 3 Flat No 3 Krupa", "3", None),
+    ("Block No 3 Flat No 3 Krupa, Pune", "3", None),
+    ("Unit 16B, Main St, Dover", "16b", "16b"),                # unit is the only number
     ("Door No 1-65 Dammaiguda, Hyderabad", "1-65", None),
     ("H.no 15, Sector 4, Noida", "4", None),
     ("Plot 48 3Rd Cross Street, Chennai", "48", None),

@@ -18,7 +18,7 @@ import polars as pl
 
 from ber.lexicon import LEGAL_EDGE_ONLY, LEGAL_UNAMBIGUOUS, NAME_PREFIXES, STATE_CLAUSES
 
-NORMALIZE_VERSION = "1.1.0"
+NORMALIZE_VERSION = "1.1.1"
 
 # ---------------------------------------------------------------------------------------------
 # Common text steps
@@ -390,10 +390,11 @@ def _strip_leading_zeros(e: pl.Expr) -> pl.Expr:
 # Frame-level entry point
 # ---------------------------------------------------------------------------------------------
 
-# Words whose following number is a unit, not the house number (US "Unit 16B", "Fl 0", "Suite 110";
-# India "Flat No 3", "Shop No 1"). S2 often drops units that S1 has (EDA 5.x).
-_UNIT_WORDS_ADDR = ["unit", "suite", "ste", "apt", "apartment", "fl", "flr", "floor", "flat", "room", "rm",
-                    "shop", "office", "off", "unt"]
+# Words whose following number is a unit, not the house number (US "Unit 16B", "Fl 0", "Suite 110").
+# S2 often drops the units that S1 has (EDA 5). India "Flat No 4A" / "Shop No 1" are NOT here: in
+# India that number is often the only identifier (S2 "H.no 4A" = S1 "Flat No.4A"); Stage 3 showed
+# excluding them lowers India house-number agreement (0.589 vs 0.622 exact on true pairs).
+_UNIT_WORDS_ADDR = ["unit", "suite", "ste", "apt", "apartment", "fl", "flr", "floor", "room", "rm", "unt"]
 # India S2/S3 prepend a fake number clause ("Door No 864", "H.no 15", "Plot 963", "Block D-764",
 # "NO 32"); S1 also starts this way when the clause is real. When an address starts with one of
 # these and has another house-number candidate, the second candidate is used.
@@ -417,7 +418,9 @@ def _house_and_unit(addr_nl: pl.Expr, skip_injected: bool = True) -> tuple[pl.Ex
     units = toks.list.eval(el.filter(is_num & ~el.str.contains(_ORDINAL) & after_unit))
     injected = addr_nl.str.contains(_INJECTED_START) & (cand.list.len() >= 2) & pl.lit(skip_injected)
     house = pl.when(injected).then(cand.list.get(1, null_on_oob=True)).otherwise(cand.list.first())
-    return _strip_leading_zeros(house), _strip_leading_zeros(units.list.first())
+    unit = units.list.first()
+    # no other number: the unit number is the best identifier we have ("Unit 16B, Main St")
+    return _strip_leading_zeros(pl.coalesce(house, unit)), _strip_leading_zeros(unit)
 
 
 def _state_clauses(comps: pl.Expr, has_latin: pl.Expr, keep_state: bool) -> pl.Expr:
