@@ -15,7 +15,7 @@ Invariants
 - Stage 1 files are immutable once written. Stage 2 writes separate sidecar files keyed by
   `entity_id`; it never rewrites a Stage 1 column. A rule change bumps NORMALIZE_VERSION and
   regenerates all files (history: 1.1.0 -> 1.1.1 house-number units; 1.1.1 -> 1.2.0 the three
-  fixes below).
+  fixes below; 1.2.0 -> 1.2.1 digit part of glued tokens in addr_numbers).
 - Country is an open set (France is test-only [2, 8.4]). No rule reads the `country` column in
   Stage 1; rules are keyed on token shapes, so on unseen text they do nothing
   (`test_unseen_text_is_noop`). Stage 2 maps only countries it has labels for; France gets
@@ -29,7 +29,7 @@ Invariants
 
 ## Cleaned data contract
 
-For teammates building blocking and features on these files. **NORMALIZE_VERSION = 1.2.0**
+For teammates building blocking and features on these files. **NORMALIZE_VERSION = 1.2.1**
 (stored in every file's parquet key-value metadata as `NORMALIZE_VERSION`; check it when you load).
 
 ### Files
@@ -70,7 +70,7 @@ For teammates building blocking and features on these files. **NORMALIZE_VERSION
 | `name_has_nonlatin` | bool | any non-Latin letter in the name | never | `true` |
 | `name_numbers` | list[str] | digit runs in `name_clean` (includes `#tag` numbers) | never (may be `[]`) | `["67693"]` |
 | `addr_clean` | str | cleaned address, commas removed | empty address | `kh no 570/13 new delhi west delhi delhi` |
-| `addr_numbers` | list[str] | every number-like token, leading zeros stripped per numeric part, ordinals included | empty address | `["570/13"]` |
+| `addr_numbers` | list[str] | every number-like token, leading zeros stripped per numeric part; plain ordinals included (`87th`). A token glued to a word (3+ letters in a row) contributes only its number part: `chambers16/11` -> `16/11`, `cour2` -> `2`; dropped if that part is an ordinal (`annexe3rd`). Unlike `addr_house_number`, which rejects glued tokens | empty address | `["570/13"]`, `["33", "2"]` |
 | `addr_house_number` | str | first street-clause number: skips ordinals, US unit numbers, `1/2`, the India injected leading clause, and words with a digit (3+ letters in a row); falls back to the unit number | empty address, or no valid number (~7-10%) | `570/13`, `c-558`, `1-11-251/1b` |
 | `addr_unit` | str | number after unit/suite/ste/apt/fl/floor/room | none (~95%) | `16b` |
 | `addr_landmark` | str | landmark clauses (near/opp/behind/...), `, `-joined | none | `opp hotel vrindhavan` |
@@ -136,7 +136,7 @@ For teammates building blocking and features on these files. **NORMALIZE_VERSION
 | `addr_house_number`: first number, skipping ordinals (`87th`, `2nd`, `1er`), US unit numbers, and the `1/2` in `10501 1/2` | 5, 6.5 | exact agreement is the strongest address signal |
 | India injected leading clause (`Door No`, `H.no`, `Plot`, `Block`, `NO` + number): skipped when another candidate exists | 5, 6.5 | ~533k India train pairs start this way on S2/S3 |
 | no house candidate -> use the unit number | Stage 3 | |
-| a house number has no run of 3+ letters (v1.2.0) | samples | `N.H.7SALEMMAINROAD`, `lane4th`, `sec9`, `etsu513` are rejected; next valid number or null. 157,840 rows changed (100,867 to null). Costs India 0.6 pp exact agreement on true pairs (glued tokens that were identical on both sides); the keep-digits alternative is in the Stage 3 ablations |
+| a house number has no run of 3+ letters (v1.2.0) | samples | `N.H.7SALEMMAINROAD`, `lane4th`, `sec9`, `etsu513` are rejected; next valid number or null. 157,840 rows changed (100,867 to null). Their number part is still available in `addr_numbers` (v1.2.1, 272,802 rows changed there). Costs India 0.6 pp exact agreement on true pairs (glued tokens that were identical on both sides); the keep-digits alternative is in the Stage 3 ablations |
 | unit words are US-style only; India `flat`/`shop` numbers stay house candidates | Stage 3 | excluding them dropped India exact agreement on true pairs from 0.622 to 0.589 |
 | leading zeros stripped in each numeric part | 5 | `Rz-0040` = `Rz-40`, `03/C` = `3/C` |
 | US abbreviations `st rd ave ln blvd cir hwy dr ct`; `st` street vs saint, `dr` drive vs Doctor, `fl` floor vs Florida, `ct` court (inside a clause) vs Connecticut (clause alone) | 5.5 | 69k vs 41k US S2 addresses |
@@ -154,7 +154,7 @@ Examples: `texas` -> `tx`, `mh` / `महाराष्ट्र` -> `maharasht
 
 ## Stage 3 results
 
-See `reports/stage3_cleaning_eval.md` (v1.2.0). Summary (true pairs vs hard negatives with the same
+See `reports/stage3_cleaning_eval.md` (v1.2.1; identical to v1.2.0, whose only change was `addr_numbers`, which no Stage 3 signal uses). Summary (true pairs vs hard negatives with the same
 name_core):
 
 - `addr_core` token Jaccard widens the gap over basic normalisation: US 0.535 -> 0.726, India 0.633 -> 0.723.

@@ -460,3 +460,16 @@ def test_fix_c_house_number_is_a_number(address, house):
 ])
 def test_fix_c_glued_words(address, house):
     assert clean_one(address=address)["addr_house_number"] == house
+
+
+@pytest.mark.parametrize("address,numbers,house", [
+    ("B3/10RD FLOOR R D CHAMBERS16/11 ARYA SAMAJ ROAD", ["b3/10rd", "16/11"], "b3/10rd"),
+    ("BOMBAY MUTUL ANNEXE3RD FLOOR RASTION SIDHWA MARG", [], None),
+    ("33 COUR2 DU CHAPEAU ROUGE, BORDEAUX", ["33", "2"], "33"),
+    ("COUR2 DE LA MARNE, BORDEAUX", ["2"], None),
+    ("N.H.7SALEMMAINROAD, SEMMANDALAM", ["7"], None),
+    ("87th Street 5575-5577, 0040 Main", ["87th", "5575-5577", "40"], "5575-5577"),
+])
+def test_addr_numbers_keep_digit_part_of_glued_tokens(address, numbers, house):
+    r = clean_one(address=address)
+    assert (r["addr_numbers"], r["addr_house_number"]) == (numbers, house)

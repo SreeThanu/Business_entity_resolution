@@ -18,7 +18,7 @@ import polars as pl
 
 from ber.lexicon import LEGAL_EDGE_ONLY, LEGAL_UNAMBIGUOUS, NAME_PREFIXES, STATE_CLAUSES
 
-NORMALIZE_VERSION = "1.2.0"
+NORMALIZE_VERSION = "1.2.1"
 
 # ---------------------------------------------------------------------------------------------
 # Common text steps
@@ -403,6 +403,18 @@ _ORDINAL = r"^\d+(?:st|nd|rd|th|er|eme|e)$"
 _MAX_LETTER_RUN = 3  # a token with this many letters in a row is a word, not a house number  # 87th, 2nd, French 1er / 2eme
 
 
+def _number_part(el: pl.Expr) -> pl.Expr:
+    """addr_numbers element: leading zeros stripped; a token glued to a word ("chambers16/11",
+    "cour2", 3+ letters in a row) keeps only its number part ("16/11", "2"), and is dropped
+    (null, filtered out) if that part is an ordinal ("annexe3rd" -> "3rd"). Plain ordinals such as
+    "87th" stay, as before. addr_house_number still rejects glued tokens outright."""
+    run = rf"\p{{L}}{{{_MAX_LETTER_RUN},}}"
+    part = el.str.replace_all(run, " ").str.strip_chars(" /-").str.extract(r"(\S*\d\S*)")
+    glued = el.str.contains(run)
+    out = pl.when(~glued).then(el).when(part.str.contains(_ORDINAL)).then(None).otherwise(part)
+    return _strip_leading_zeros(out)
+
+
 def _house_and_unit(addr_nl: pl.Expr, skip_injected: bool = True, letter_run: int | None = _MAX_LETTER_RUN,
                     glued: str = "reject") -> tuple[pl.Expr, pl.Expr]:
     """(addr_house_number, addr_unit) from comma-separated, landmark-free, initials-merged text.
@@ -496,7 +508,7 @@ def clean_frame(lf: pl.LazyFrame) -> pl.LazyFrame:
     house, unit = _house_and_unit(pl.col("_addr_nl"))
     lf = lf.with_columns(
         name_nospace=pl.col("name_core").str.replace_all(" ", ""),
-        addr_numbers=pl.col("addr_clean").str.extract_all(_NUM).list.eval(_strip_leading_zeros(pl.element())),
+        addr_numbers=pl.col("addr_clean").str.extract_all(_NUM).list.eval(_number_part(pl.element())).list.drop_nulls(),
         addr_house_number=house,
         addr_unit=unit,
         addr_no_landmark=_drop_commas(pl.col("_addr_nl")),
