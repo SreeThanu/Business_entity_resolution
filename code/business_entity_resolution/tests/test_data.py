@@ -55,7 +55,10 @@ def train_s1_ids() -> set[str]:
 def test_row_counts(split, source):
     n = pq.read_metadata(config.parquet_source_path(split, source)).num_rows
     assert n == EXPECTED_ROWS[(split, source)]
-    assert n == count_data_lines(config.raw_source_path(split, source))
+    raw = config.raw_source_path(split, source)
+    if not raw.exists():
+        pytest.skip(f"raw TSV not present ({raw}); parquet count checked against EXPECTED_ROWS only")
+    assert n == count_data_lines(raw)
 
 
 def test_ground_truth_row_counts(gt_long):

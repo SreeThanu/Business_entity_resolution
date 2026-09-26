@@ -22,6 +22,10 @@ DATA_DIR: Path = ROOT / "data"
 PARQUET_DIR: Path = DATA_DIR / "parquet"
 SPLITS_DIR: Path = DATA_DIR / "splits"
 
+# Cleaned data (scripts/03_clean.py) and the lookup tables learned from train pairs.
+CLEAN_DIR: Path = DATA_DIR / "clean"
+DICTS_DIR: Path = DATA_DIR / "dicts"
+
 # Submission artefacts.
 OUTPUT_DIR: Path = ROOT / "output"
 
@@ -47,3 +51,7 @@ def parquet_ground_truth_path(long: bool) -> Path:
 
 def split_ids_path(name: str) -> Path:
     return SPLITS_DIR / f"{name}.txt"
+
+
+def clean_source_path(split: str, source: int) -> Path:
+    return CLEAN_DIR / f"{split}_source{source}.parquet"

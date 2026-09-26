@@ -3,6 +3,7 @@ iniconfig==2.3.0
 numpy==2.4.6
 packaging==26.3
 pandas==3.0.6
+polars==1.44.2
 pluggy==1.6.0
 pyarrow==25.0.1
 Pygments==2.21.0
