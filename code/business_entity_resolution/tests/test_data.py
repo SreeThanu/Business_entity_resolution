@@ -57,7 +57,7 @@ def test_row_counts(split, source):
     assert n == EXPECTED_ROWS[(split, source)]
     raw = config.raw_source_path(split, source)
     if not raw.exists():
-        pytest.skip(f"raw TSV not present ({raw}); parquet count checked against EXPECTED_ROWS only")
+        pytest.skip(f"raw TSV missing: {raw} (set BER_RAW_DATASET_DIR); parquet count checked against EXPECTED_ROWS only")
     assert n == count_data_lines(raw)
 
 

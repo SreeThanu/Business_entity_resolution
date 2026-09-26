@@ -12,9 +12,10 @@ from pathlib import Path
 
 ROOT: Path = Path(os.environ.get("BER_ROOT", Path(__file__).resolve().parents[4])).resolve()
 
-# Raw, untouched copy of the fresh download (never modified).
-RAW_DIR: Path = ROOT / "data_raw"
-RAW_DATASET_DIR: Path = RAW_DIR / "dataset"
+# Raw, untouched copy of the official download (never modified). It lives on the external SSD;
+# override with BER_RAW_DATASET_DIR (the folder holding train/ and test/ TSVs).
+RAW_DATASET_DIR: Path = Path(os.environ.get(
+    "BER_RAW_DATASET_DIR", "/Volumes/thanu's T7/Business_entity_resolution/student_resource/dataset"))
 CHECKSUM_DIR: Path = ROOT / "checksums"
 
 # Derived data.

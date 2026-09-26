@@ -24,21 +24,21 @@ Pairs per group:
 | India | legal | class conflict (legacy end-only) | 0.0549 | 0.3138 | -0.2589 |
 | India | house | exact: raw | 0.6308 | 0.0157 | 0.6151 |
 | India | house | exact: basic | 0.6280 | 0.0127 | 0.6152 |
-| India | house | exact: clean | 0.6218 | 0.0058 | 0.6160 |
+| India | house | exact: clean | 0.6160 | 0.0058 | 0.6102 |
 | India | house | small_gap: raw | 0.0592 | 0.1181 | -0.0588 |
 | India | house | small_gap: basic | 0.0569 | 0.1141 | -0.0571 |
-| India | house | small_gap: clean | 0.0928 | 0.1280 | -0.0351 |
+| India | house | small_gap: clean | 0.0911 | 0.1253 | -0.0342 |
 | India | house | big_gap: raw | 0.1733 | 0.6886 | -0.5152 |
 | India | house | big_gap: basic | 0.1677 | 0.6790 | -0.5112 |
-| India | house | big_gap: clean | 0.1387 | 0.6722 | -0.5335 |
+| India | house | big_gap: clean | 0.1360 | 0.6583 | -0.5223 |
 | India | house | missing: raw | 0.1366 | 0.1777 | -0.0411 |
 | India | house | missing: basic | 0.1474 | 0.1943 | -0.0469 |
-| India | house | missing: clean | 0.1467 | 0.1940 | -0.0473 |
+| India | house | missing: clean | 0.1569 | 0.2106 | -0.0537 |
 | India | addr | Jaccard: raw | 0.3236 | 0.0206 | 0.3030 |
 | India | addr | Jaccard: basic | 0.6838 | 0.0507 | 0.6331 |
 | India | addr | Jaccard: addr_clean | 0.6881 | 0.0503 | 0.6378 |
-| India | addr | Jaccard: addr_std | 0.6821 | 0.0431 | 0.6391 |
-| India | addr | Jaccard: addr_core | 0.7641 | 0.0415 | 0.7227 |
+| India | addr | Jaccard: addr_std | 0.6821 | 0.0430 | 0.6391 |
+| India | addr | Jaccard: addr_core | 0.7661 | 0.0435 | 0.7226 |
 | US | name | exact: raw | 0.0592 | 0.0856 | -0.0264 |
 | US | name | exact: basic | 0.2594 | 0.2320 | 0.0273 |
 | US | name | exact: name_core | 0.5494 | 1.0000 | -0.4506 |
@@ -61,7 +61,7 @@ Pairs per group:
 | US | addr | Jaccard: basic | 0.5822 | 0.0471 | 0.5351 |
 | US | addr | Jaccard: addr_clean | 0.5811 | 0.0476 | 0.5335 |
 | US | addr | Jaccard: addr_std | 0.6814 | 0.0616 | 0.6197 |
-| US | addr | Jaccard: addr_core | 0.7920 | 0.0663 | 0.7258 |
+| US | addr | Jaccard: addr_core | 0.7918 | 0.0663 | 0.7255 |
 
 ## Rule ablations
 
@@ -69,20 +69,24 @@ A rule is flagged NARROWS when switching it off gives a larger |true - hard_neg|
 
 | country | rule | gap_rule_on | gap_rule_off | flag |
 |---|---|---|---|---|
-| India | injected-clause skip (house number exact) | 0.6160 | 0.5889 | ok |
-| India | state slot removed (addr_core vs addr_std) | 0.7227 | 0.6391 | ok |
+| India | injected-clause skip (house number exact) | 0.6102 | 0.5826 | ok |
+| India | glued-word reject, v1.2.0 (house number exact) | 0.6102 | 0.6160 | NARROWS |
+| India | glued-word reject vs keep-digits alternative (exact) | 0.6102 | 0.6169 | NARROWS |
+| India | state slot removed (addr_core vs addr_std) | 0.7226 | 0.6391 | ok |
 | India | abbrev + no-marker std (addr_std vs addr_clean) | 0.6391 | 0.6378 | ok |
 | India | legal forms anywhere (families vs end-only class) | -0.1857 | -0.2589 | NARROWS |
 | India | Stage 1 name_core vs basic (exact) | -0.5090 | 0.0360 | ok |
-| India | Stage 1 house number vs basic (exact) | 0.6160 | 0.6152 | ok |
-| India | Stage 1 addr_core vs basic (Jaccard) | 0.7227 | 0.6331 | ok |
+| India | Stage 1 house number vs basic (exact) | 0.6102 | 0.6152 | NARROWS |
+| India | Stage 1 addr_core vs basic (Jaccard) | 0.7226 | 0.6331 | ok |
 | US | injected-clause skip (house number exact) | 0.7208 | 0.7208 | ok |
-| US | state slot removed (addr_core vs addr_std) | 0.7258 | 0.6197 | ok |
+| US | glued-word reject, v1.2.0 (house number exact) | 0.7208 | 0.7208 | ok |
+| US | glued-word reject vs keep-digits alternative (exact) | 0.7208 | 0.7208 | ok |
+| US | state slot removed (addr_core vs addr_std) | 0.7255 | 0.6197 | ok |
 | US | abbrev + no-marker std (addr_std vs addr_clean) | 0.6197 | 0.5335 | ok |
 | US | legal forms anywhere (families vs end-only class) | -0.2471 | -0.2206 | ok |
 | US | Stage 1 name_core vs basic (exact) | -0.4506 | 0.0273 | ok |
 | US | Stage 1 house number vs basic (exact) | 0.7208 | 0.7063 | ok |
-| US | Stage 1 addr_core vs basic (Jaccard) | 0.7258 | 0.5351 | ok |
+| US | Stage 1 addr_core vs basic (Jaccard) | 0.7255 | 0.5351 | ok |
 
 ## Before/after examples
 
@@ -90,7 +94,7 @@ A rule is flagged NARROWS when switching it off gives a larger |true - hard_neg|
 
 | business_name | name_core | legal_families | business_address | addr_core | addr_house_number | addr_unit | addr_state_raw |
 |---|---|---|---|---|---|---|---|
-| Wilson Royal LLC Services | wilson royal services | LLC | COOK RD, WASHINGTON, IN | cook road |  |  | washington, in |
+| Wilson Royal LLC Services | wilson royal services | LLC | COOK RD, WASHINGTON, IN | cook road washington |  |  | in |
 | bigbarbershop.com | bigbarbershop |  | NC, 1505  GALLANT FOX CT, HOPE MILLS | 1505 gallant fox court hope mills | 1505 |  | nc |
 | @pinnacle | pinnacle |  | 00252 Executive Dr, JACKSON, TN | 252 executive drive jackson | 252 |  | tn |
 | Nataa | nataa |  | 001405 CLUB HOUSE DRIVE, APOTS, CA | 1405 club house drive apots | 1405 |  | ca |
@@ -122,12 +126,12 @@ A rule is flagged NARROWS when switching it off gives a larger |true - hard_neg|
 | Shrivardhan Holdings Services | shrivardhan holdings services |  | No 009Th & 5Th Floor, Bangalore, ಕರ್ನಾಟಕ | 9th and 5th floor bangalore |  |  | ಕರ್ನಾಟಕ |
 | PYRAPYRADREX | pyrapyradrex |  | NO 13/2, 1ST FLOOR, PADMALAYA, BUDHA VIHAR ROAD, FRAZER TOWN, BANGALORE, BANGALORE NORTH, Karnataka | 13/2 1st floor padmalaya budha vihar road frazer town bangalore bangalore north | 13/2 |  | karnataka |
 | BRONZE RESORTS GROUP | bronze resorts group |  | No 027 Station Road, Katni, MP | 27 station road katni | 27 |  | mp |
-| स्काई प्रोडक्ट्स प्राइवेट लिमिटेड | स्काई प्रोडक्ट्स | LIMITED PRIVATE | Door No 243 S-95 Shops/fplot-2 Dwarka, Manish Global Mall Sec-22, West Delhi, New Delhi, DL | door 243 s-95 shops fplot 2 dwarka manish global mall sector 22 west delhi | s-95 |  | new delhi, dl |
+| स्काई प्रोडक्ट्स प्राइवेट लिमिटेड | स्काई प्रोडक्ट्स | LIMITED PRIVATE | Door No 243 S-95 Shops/fplot-2 Dwarka, Manish Global Mall Sec-22, West Delhi, New Delhi, DL | door 243 s-95 shops fplot 2 dwarka manish global mall sector 22 west delhi new delhi | s-95 |  | dl |
 | INTEGRATED ENEPRHESS | integrated eneprhess |  | महाराष्ट्र, FLAT NO 10 , FLOOR NO 1, WING A, VARSHA OLIVE A, VARSHA OTIVE CHSL, SHARDDHANAND ROAD, OPP AKRUTI ERICA, VILE PARLE EAST, MUMBAI | flat 10 floor 1 wing a varsha olive a varsha otive chsl sharddhanand road vile parle east mumbai | 10 | 1 | महाराष्ट्र |
 | Devanth Consultancy | devanth consultancy |  | #14 DADISETH AGIARY LANE4TH FLOOR KANCHAN BHAVAN KALBADEVI ROAD, MUMBAI, Maharashtra | 14 dadiseth agiary lane4th floor kanchan bhavan kalbadevi road mumbai | 14 |  | maharashtra |
 | TKIT Industries Pvt | tkit industries | PRIVATE | 1000 , GOPAL JI KA RASTA, JAIPUR, N/A, Rajasthan | 1000 gopal ji ka rasta jaipur | 1000 |  | rajasthan |
-| Deva (India) Junction Public Limited | deva india junction | PUBLIC | NO ##70 ''KISHOREGARDEN, N.H.7SALEMMAINROAD, SEMMADAI, MANMANGALAM(PO), KARUR, தமிழ்நாடு | 70 kishoregarden nh 7salemmainroad semmadai manmangalam po karur | 7salemmainroad |  | தமிழ்நாடு |
-| Jai Pressings | jai pressings |  | C-558, LIFT, VIKAS PURI, NEW DELHI, दिल्ली | c-558 lift vikas puri | c-558 |  | new delhi, दिल्ली |
+| Deva (India) Junction Public Limited | deva india junction | PUBLIC | NO ##70 ''KISHOREGARDEN, N.H.7SALEMMAINROAD, SEMMADAI, MANMANGALAM(PO), KARUR, தமிழ்நாடு | 70 kishoregarden nh 7salemmainroad semmadai manmangalam po karur | 70 |  | தமிழ்நாடு |
+| Jai Pressings | jai pressings |  | C-558, LIFT, VIKAS PURI, NEW DELHI, दिल्ली | c-558 lift vikas puri new delhi | c-558 |  | दिल्ली |
 | સધર્ન પ્રીમિયર સોલ્યુશન્સ પ્રાઇવેટ લિમિટેડ | સધર્ન પ્રીમિયર સોલ્યુશન્સ | LIMITED PRIVATE | #2-KUNTA PARK SOCIEY, NAWA WADAJ, AHMEDABAD, Gujarat | 2 kunta park sociey nawa wadaj ahmedabad | 2 |  | gujarat |
 | Krishna Cóncern Enterprises Pvt. Ltd. | krishna concern enterprises | LIMITED PRIVATE | ગુજરાત, DOOR NO 720 ANAM-2, NR. AXIOM, OPP. SATYAMEV SHIVALIK, DASKROI | door 720 anam 2 daskroi | 720 |  | ગુજરાત |
 | Imagine  Agro Private Limited | imagine agro | LIMITED PRIVATE | A WING, FLAT NO 401, SPRINGFIELD, NEAR MUMBAI BANGALORE HIGHWAY, NEAR HOTEL KATEEL AMBEGAON BUDRUK, HAVELI, महाराष्ट्र | a wing flat 401 springfield haveli | 401 |  | महाराष्ट्र |
@@ -141,7 +145,7 @@ A rule is flagged NARROWS when switching it off gives a larger |true - hard_neg|
 | business_name | name_core | legal_families | business_address | addr_core | addr_house_number | addr_unit | addr_state_raw |
 |---|---|---|---|---|---|---|---|
 | On (France) Unîon | on france union |  | 42 R DE BOTTROP, TOURCOING, Hauts-de-France | 42 rue de bottrop tourcoing | 42 |  | hauts de france |
-| SA SAPEURS & CIE | sapeurs and | CO SA | 47 RUE DAUBENTON, Roubaix, Hauts-de-France | 47 rue daubenton roubaix | 47 |  | hauts de france |
+| SA SAPEURS & CIE | sapeurs | CO SA | 47 RUE DAUBENTON, Roubaix, Hauts-de-France | 47 rue daubenton roubaix | 47 |  | hauts de france |
 | Établissements Mada SARL | etablissements mada | SARL | 1 IMP. DE LA PLAINE, NANTES, Pays de la Loire | 1 impasse de la plaine nantes | 1 |  | pays de la loire |
 | Sacre Stud Sportive EURL | sacre stud sportive | EURL | RUE DE LILEL, ROUBAIX, Nord | rue de lilel roubaix |  |  | nord |
 | Maison De Santé De La Sainte Groupe | maison de sante de la sainte groupe |  | 48 R. Du Sabot, Lille | 48 rue du sabot lille | 48 |  |  |

@@ -105,9 +105,12 @@ def features(p: pl.DataFrame) -> pl.DataFrame:
     basic_house = lambda side: basic(pl.col(f"{side}_business_address")).str.extract(r"(?:^| )(\d\S*)")
     # ablations recomputed from raw text for the pair rows only
     p = p.with_columns(**{f"{s}_nl": addr_nl(pl.col(f"{s}_business_address")) for s in "ab"})
-    p = p.with_columns(**{f"{s}_house_noskip": _house_and_unit(pl.col(f"{s}_nl"), skip_injected=False)[0] for s in "ab"})
-    p = p.with_columns(**{f"{s}_house_noskip": pl.when(pl.col(f"{s}_house_noskip") == "").then(None)
-                          .otherwise(pl.col(f"{s}_house_noskip")) for s in "ab"})
+    variants = {"noskip": dict(skip_injected=False), "norule": dict(letter_run=None),
+                "keepdigits": dict(glued="keep_digits")}
+    for v, kw in variants.items():
+        p = p.with_columns(**{f"{s}_house_{v}": _house_and_unit(pl.col(f"{s}_nl"), **kw)[0] for s in "ab"})
+        p = p.with_columns(**{f"{s}_house_{v}": pl.when(pl.col(f"{s}_house_{v}") == "").then(None)
+                              .otherwise(pl.col(f"{s}_house_{v}")) for s in "ab"})
     both_addr = A("addr_core").is_not_null() & B("addr_core").is_not_null()
     f = p.with_columns(
         name_eq_raw=A("business_name") == B("business_name"),
@@ -120,13 +123,15 @@ def features(p: pl.DataFrame) -> pl.DataFrame:
         house_basic=house_bucket(basic_house("a"), basic_house("b")),
         house_clean=house_bucket(A("addr_house_number"), B("addr_house_number")),
         house_noskip=house_bucket(pl.col("a_house_noskip"), pl.col("b_house_noskip")),
+        house_norule=house_bucket(pl.col("a_house_norule"), pl.col("b_house_norule")),
+        house_keepdigits=house_bucket(pl.col("a_house_keepdigits"), pl.col("b_house_keepdigits")),
         jacc_raw=pl.when(both_addr).then(jaccard(toks(A("business_address")), toks(B("business_address")))),
         jacc_basic=pl.when(both_addr).then(jaccard(toks(basic(A("business_address"))), toks(basic(B("business_address"))))),
         jacc_addr_clean=pl.when(both_addr).then(jaccard(toks(A("addr_clean")), toks(B("addr_clean")))),
         jacc_addr_std=pl.when(both_addr).then(jaccard(toks(A("addr_std")), toks(B("addr_std")))),
         jacc_addr_core=pl.when(both_addr).then(jaccard(toks(A("addr_core")), toks(B("addr_core")))),
     )
-    for v in ("raw", "basic", "clean", "noskip"):
+    for v in ("raw", "basic", "clean", "noskip", "norule", "keepdigits"):
         f = f.with_columns(**{f"house_{v}_{k}": pl.col(f"house_{v}") == k for k in ("exact", "small_gap", "big_gap", "missing")})
     return f
 
@@ -146,6 +151,8 @@ METRICS = [
 # (rule, column with the rule ON, column with the rule OFF). Same sign convention: bigger |gap| wins.
 ABLATIONS = [
     ("injected-clause skip (house number exact)", "house_clean_exact", "house_noskip_exact"),
+    ("glued-word reject, v1.2.0 (house number exact)", "house_clean_exact", "house_norule_exact"),
+    ("glued-word reject vs keep-digits alternative (exact)", "house_clean_exact", "house_keepdigits_exact"),
     ("state slot removed (addr_core vs addr_std)", "jacc_addr_core", "jacc_addr_std"),
     ("abbrev + no-marker std (addr_std vs addr_clean)", "jacc_addr_std", "jacc_addr_clean"),
     ("legal forms anywhere (families vs end-only class)", "legal_conflict_families", "legal_conflict_class_endonly"),

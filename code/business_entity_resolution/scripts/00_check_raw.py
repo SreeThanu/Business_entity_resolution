@@ -1,9 +1,9 @@
 """Check the raw dataset: checksums, optional comparison with an old copy, and format checks.
 
 Usage:
-    python scripts/00_check_raw.py                      # hash + format-check data_raw/
+    python scripts/00_check_raw.py                      # hash + format-check config.RAW_DATASET_DIR
     python scripts/00_check_raw.py --old-copy PATH      # also compare with PATH/dataset (read-only)
-    python scripts/00_check_raw.py --verify             # check data_raw/ against the committed hashes
+    python scripts/00_check_raw.py --verify             # check config.RAW_DATASET_DIR against the committed hashes
 
 Writes checksums/fresh_dataset.sha256 (and checksums/old_copy_dataset.sha256 when --old-copy is
 given) in sha256sum format. With --verify it writes nothing and exits non-zero if any file's hash
@@ -121,7 +121,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--old-copy", type=Path, help="old student_resource dir (read-only)")
     ap.add_argument("--verify", action="store_true",
-                    help="compare data_raw/ with checksums/fresh_dataset.sha256 instead of rewriting it")
+                    help="compare the raw dataset with checksums/fresh_dataset.sha256 instead of rewriting it")
     args = ap.parse_args()
 
     fresh_root = config.RAW_DATASET_DIR

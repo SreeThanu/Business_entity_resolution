@@ -18,7 +18,7 @@ import polars as pl
 
 from ber.lexicon import LEGAL_EDGE_ONLY, LEGAL_UNAMBIGUOUS, NAME_PREFIXES, STATE_CLAUSES
 
-NORMALIZE_VERSION = "1.1.1"
+NORMALIZE_VERSION = "1.2.0"
 
 # ---------------------------------------------------------------------------------------------
 # Common text steps
@@ -399,13 +399,15 @@ _UNIT_WORDS_ADDR = ["unit", "suite", "ste", "apt", "apartment", "fl", "flr", "fl
 # "NO 32"); S1 also starts this way when the clause is real. When an address starts with one of
 # these and has another house-number candidate, the second candidate is used.
 _INJECTED_START = r"^(?:door no|door|d no|dno|h no|hno|house no|plot no|plot|block no|block|no) [^\s]*\d"
-_ORDINAL = r"^\d+(?:st|nd|rd|th|er|eme|e)$"  # 87th, 2nd, French 1er / 2eme
+_ORDINAL = r"^\d+(?:st|nd|rd|th|er|eme|e)$"
+_MAX_LETTER_RUN = 3  # a token with this many letters in a row is a word, not a house number  # 87th, 2nd, French 1er / 2eme
 
 
-def _house_and_unit(addr_nl: pl.Expr, skip_injected: bool = True) -> tuple[pl.Expr, pl.Expr]:
+def _house_and_unit(addr_nl: pl.Expr, skip_injected: bool = True, letter_run: int | None = _MAX_LETTER_RUN,
+                    glued: str = "reject") -> tuple[pl.Expr, pl.Expr]:
     """(addr_house_number, addr_unit) from comma-separated, landmark-free, initials-merged text.
 
-    skip_injected=False disables the injected-clause rule (used only by the Stage 3 ablation)."""
+    skip_injected=False, letter_run=None and glued="keep_digits" exist only for the Stage 3 ablations."""
     # commas stay as their own tokens so a unit word never reaches across a clause boundary
     # ("2nd floor, 1-11-251/1b": the number is not a floor number)
     toks = addr_nl.str.replace_all(",", " ,").str.split(" ")
@@ -414,8 +416,15 @@ def _house_and_unit(addr_nl: pl.Expr, skip_injected: bool = True) -> tuple[pl.Ex
     after_unit = (prev.is_in(_UNIT_WORDS_ADDR).fill_null(False)
                   | (prev.is_in(["no", "number"]).fill_null(False) & prev2.is_in(_UNIT_WORDS_ADDR).fill_null(False)))
     fraction_after_num = el.str.contains(r"^\d+/\d+$") & prev.str.contains(r"\d").fill_null(False)  # "10501 1/2"
-    cand = toks.list.eval(el.filter(is_num & ~el.str.contains(_ORDINAL) & ~after_unit & ~fraction_after_num))
-    units = toks.list.eval(el.filter(is_num & ~el.str.contains(_ORDINAL) & after_unit))
+    # a house/unit number has a digit and no run of 3+ letters: "7salemmainroad" (glued
+    # "N.H.7SALEMMAINROAD"), "lane4th", "sec9", "etsu513" are words with a digit, not numbers
+    if glued == "keep_digits" and letter_run:  # ablation: cut the letter runs off instead of rejecting
+        el = el.str.replace_all(rf"\p{{L}}{{{letter_run},}}", "").str.strip_chars("/-")
+    valid = is_num & ~el.str.contains(_ORDINAL)
+    if letter_run and glued == "reject":
+        valid = valid & ~el.str.contains(rf"\p{{L}}{{{letter_run},}}")
+    cand = toks.list.eval(el.filter(valid & ~after_unit & ~fraction_after_num))
+    units = toks.list.eval(el.filter(valid & after_unit))
     injected = addr_nl.str.contains(_INJECTED_START) & (cand.list.len() >= 2) & pl.lit(skip_injected)
     house = pl.when(injected).then(cand.list.get(1, null_on_oob=True)).otherwise(cand.list.first())
     unit = units.list.first()
@@ -423,16 +432,21 @@ def _house_and_unit(addr_nl: pl.Expr, skip_injected: bool = True) -> tuple[pl.Ex
     return _strip_leading_zeros(pl.coalesce(house, unit)), _strip_leading_zeros(unit)
 
 
-def _state_clauses(comps: pl.Expr, has_latin: pl.Expr, keep_state: bool) -> pl.Expr:
-    """Clauses that are (keep_state=True) or are not (False) a state/region slot: a known state /
-    region name or code, or - in an address that also has Latin text - a clause written wholly in a
+def _state_index(comps: pl.Expr, has_latin: pl.Expr) -> pl.Expr:
+    """Index of THE state/region clause, or null. A clause qualifies when it is entirely a known
+    state / region name or code, or - in an address that also has Latin text - written wholly in a
     non-Latin script (India S2 writes the state in the native script: 88% of such clauses are the
-    last clause and the top values are all state names)."""
+    last clause and the top values are all state names).
+
+    Only one clause is taken: the LAST clause if it qualifies (the state slot in every source),
+    otherwise the first qualifying clause (S2/S3 reorder components: "TX, Houston, 12 Main St").
+    So "Washington, IN" gives state "in" and keeps the city "washington"."""
     el = pl.element()
     known = el.is_in(STATE_CLAUSES)
     native = el.str.contains(r"\p{L}") & ~el.str.contains(r"\p{Latin}")
-    pick = lambda cond: comps.list.eval(el.filter(cond if keep_state else ~cond))
-    return pl.when(has_latin).then(pick(known | native)).otherwise(pick(known))
+    mask = pl.when(has_latin).then(comps.list.eval(known | native)).otherwise(comps.list.eval(known))
+    first = mask.list.eval(pl.element().arg_true()).list.first()
+    return pl.when(mask.list.last()).then(comps.list.len() - 1).otherwise(first)
 
 
 STAGE1_COLUMNS = [
@@ -493,11 +507,16 @@ def clean_frame(lf: pl.LazyFrame) -> pl.LazyFrame:
         _has_latin=pl.col("addr_clean").str.contains(r"\p{Latin}"),
     )
     comps, has_latin = pl.col("addr_std_components"), pl.col("_has_latin")
+    lf = lf.with_columns(_state_i=_state_index(comps, has_latin))
     lf = lf.with_columns(
         addr_std=comps.list.join(" "),
-        addr_state_raw=_state_clauses(comps, has_latin, keep_state=True).list.join(", "),
+        addr_state_raw=comps.list.get(pl.col("_state_i"), null_on_oob=True),
         # leading zeros stripped in each numeric part ("rz 0040" = "rz 40", "03/c" = "3/c")
-        addr_core=_strip_leading_zeros(_state_clauses(comps, has_latin, keep_state=False).list.join(" ")),
+        # drop the state clause; with no state, the index sentinel len() keeps every clause
+        addr_core=_strip_leading_zeros(pl.concat_list([
+            comps.list.head(pl.col("_state_i").fill_null(comps.list.len()).fill_null(0)),
+            comps.list.slice(pl.col("_state_i").fill_null(comps.list.len()).fill_null(0) + 1),
+        ]).list.join(" ")),
     )
     empty = pl.col("addr_clean").fill_null("") == ""
     lf = lf.with_columns(
@@ -506,4 +525,4 @@ def clean_frame(lf: pl.LazyFrame) -> pl.LazyFrame:
         [pl.when(pl.col(c) == "").then(None).otherwise(pl.col(c)).alias(c)
          for c in ("addr_house_number", "addr_unit", "addr_landmark", "addr_state_raw", "addr_core", "name_domain_stem")]
     )
-    return lf.drop("_addr_c0", "_addr_nl", "_name_base", "_has_latin")
+    return lf.drop("_addr_c0", "_addr_nl", "_name_base", "_has_latin", "_state_i")

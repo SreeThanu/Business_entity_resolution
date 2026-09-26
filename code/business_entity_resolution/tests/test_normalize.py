@@ -410,3 +410,53 @@ def test_france_state_canon_is_null():
         pl.scan_parquet(config.clean_source_path("test", 1)).select("entity_id", "country"), on="entity_id")
     n = df.filter(pl.col("country") == "France").select(pl.col("addr_state_canon").is_not_null().sum()).collect().item()
     assert n == 0
+
+
+# --- v1.2.0 fixes --------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,families,core", [
+    ("SA SAPEURS & CIE", ["CO", "SA"], "sapeurs"),
+    ("Reso & Cie SAS", ["CO", "SAS"], "reso"),
+    ("Festival et Cie S.A.R.L.", ["CO", "SARL"], "festival"),
+    ("Cie Generale Des Eaux", ["CO"], "generale des eaux"),
+    # "cie" only as a whole token: never inside a word
+    ("Pharmacie Centrale", [], "pharmacie centrale"),
+    ("Sciences Et Societe", [], "sciences and societe"),
+])
+def test_fix_a_cie(name, families, core):
+    r = clean_one(name=name)
+    assert (r["legal_families"], r["name_core"]) == (families, core)
+
+
+@pytest.mark.parametrize("address,state,core", [
+    ("Washington, IN", "in", "washington"),
+    ("1003 Park Blvd, Washington, IN", "in", "1003 park boulevard washington"),
+    ("Delhi, UNIT NO.30, FLOOR 3, AEROCITY", "delhi", "unit 30 floor 3 aerocity"),
+    ("C-558, LIFT, VIKAS PURI, NEW DELHI, दिल्ली", "दिल्ली", "c-558 lift vikas puri new delhi"),
+    ("TX, Houston, 12 Main St", "tx", "houston 12 main street"),
+    ("4 Rue Daurat, Saint-Nazaire, Pays de la Loire", "pays de la loire", "4 rue daurat saint nazaire"),
+])
+def test_fix_b_single_state_clause(address, state, core):
+    r = clean_one(address=address)
+    assert (r["addr_state_raw"], r["addr_core"]) == (state, core)
+
+
+@pytest.mark.parametrize("address,house", [
+    ("NO ##70 KISHOREGARDEN, N.H.7SALEMMAINROAD, SEMMANDALAM", "70"),
+    ("N.H.7SALEMMAINROAD, SEMMANDALAM", None),
+    ("14 DADISETH AGIARY LANE4TH FLOOR", "14"),
+    ("35A, DHAWALGIRI APARTMENTS", "35a"),
+    ("#D/3A-3B, 3RD FLOOR, RING ROAD", "d/3a-3b"),
+])
+def test_fix_c_house_number_is_a_number(address, house):
+    assert clean_one(address=address)["addr_house_number"] == house
+
+
+@pytest.mark.parametrize("address,house", [
+    ("H NO#40 PLOT5 BLOCK A SEC9, ROHINI", "40"),
+    ("Bldg Etsu513, Johnson City, 1515 Seminole Drive", "1515"),
+    ("Rz-0040, Palam", "40"),
+    ("1-11-251/1B, Hyderabad", "1-11-251/1b"),
+])
+def test_fix_c_glued_words(address, house):
+    assert clean_one(address=address)["addr_house_number"] == house

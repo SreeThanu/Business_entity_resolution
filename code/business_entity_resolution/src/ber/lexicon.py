@@ -44,11 +44,13 @@ LEGAL_UNAMBIGUOUS: list[tuple[str, str]] = [
     ("LLP", "এলএলপি"), ("LLP", "એલએલપી"), ("LLP", "എൽഎൽപി"),
 ]
 
+# "cie" = compagnie: French "& Cie" / "et Cie" become "and cie" after cleaning ("Reso & Cie SAS").
+# Matched as a whole token only, so "pharmacie", "sciences", "societe" are never touched.
 # Short forms that are also ordinary words or initials ("co" in "Co Operative", "sa"/"sas" as
 # Indian initials, "lp", "pc"). Removed only at the START or END of the name (after the
 # unambiguous forms are gone), never in the middle ("Maa Co Services" keeps "co").
 LEGAL_EDGE_ONLY: list[tuple[str, str]] = [
-    ("CO", "and co"), ("CO", "co"), ("CO", "cie"),
+    ("CO", "and co"), ("CO", "and cie"), ("CO", "co"), ("CO", "cie"),
     ("SAS", "sas"), ("SA", "sa"), ("SCI", "sci"), ("SNC", "snc"),
     ("LP", "lp"), ("PC", "pc"), ("EI", "ei"),
 ]
