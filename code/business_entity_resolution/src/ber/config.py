@@ -59,10 +59,14 @@ def clean_source_path(split: str, source: int) -> Path:
 
 
 # ---------------------------------------------------------------------------------------------
-# Blocking (src/ber/blocking.py, scripts/05_block.py). See BLOCKING.md for how these were chosen.
+# Blocking (src/ber/blocking.py, scripts/06_block.py). See BLOCKING.md for how these were chosen.
 # ---------------------------------------------------------------------------------------------
 
 CAND_DIR: Path = DATA_DIR / "cand"                 # candidates + vector cache (on the T7)
+# Where resumable outputs go: chunk parts, the P4 cache and the final candidate files. Defaults to
+# CAND_DIR; on Colab point it at Google Drive so a disconnect loses nothing (the vector cache stays
+# in CAND_DIR on the fast local disk).
+CAND_PERSIST_DIR: Path = Path(os.environ.get("BER_CAND_PERSIST_DIR", str(CAND_DIR)))
 BLOCK_N_FEATURES = 2 ** 24                         # hashed char_wb 3-5-gram space (as in the EDA)
 BLOCK_SHARD_ROWS = 500_000                         # rows per cached vector shard
 BLOCK_QUERY_CHUNK = 250_000                        # S1 queries processed together (memory bound)
@@ -77,6 +81,3 @@ BLOCK_P3_MAX_BLOCK = 20                            # P3 key blocks with more poo
 BLOCK_DEV_QUERIES = 20_000                         # S1 queries sampled in --mode dev
 BLOCK_SEED = 0
 
-
-def cand_path(split: str) -> Path:
-    return CAND_DIR / f"{split}_candidates.parquet"

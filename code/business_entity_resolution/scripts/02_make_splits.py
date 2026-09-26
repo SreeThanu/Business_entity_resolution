@@ -2,6 +2,10 @@
 
 The splits are FROZEN. This script refuses to overwrite existing split files; pass
 --out DIR to write somewhere else (the tests use this to check reproducibility).
+
+    python scripts/02_make_splits.py --candidate-samples
+writes the fixed query samples for candidate generation (cand_train_200k, cand_val_50k; see
+ber.splits.CANDIDATE_SAMPLES) from the existing train_ids / val_ids, plus candidate_samples.sha256.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 
 from ber import config, data
-from ber.splits import VAL_PERCENT, make_splits
+from ber.splits import CANDIDATE_SAMPLES, VAL_PERCENT, hash_sample, make_splits
 
 
 def match_stats(gt_long: pd.DataFrame, ids: list[str]) -> tuple[float, float]:
@@ -24,11 +28,31 @@ def match_stats(gt_long: pd.DataFrame, ids: list[str]) -> tuple[float, float]:
     return float((n_matches == 0).mean()), float(matched.mean())
 
 
+def write_candidate_samples(out: Path) -> int:
+    import hashlib
+    written = []
+    for name, (source, n, salt) in CANDIDATE_SAMPLES.items():
+        path = out / f"{name}.txt"
+        if path.exists():
+            print(f"refusing to overwrite frozen sample {path}", file=sys.stderr)
+            return 1
+        base = (out / f"{source}.txt").read_text().split()
+        ids = hash_sample(base, n, salt)
+        path.write_text("\n".join(ids) + "\n")
+        written.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
+        print(f"{name}: {len(ids):,} of {len(base):,} {source}")
+    (out / "candidate_samples.sha256").write_text("\n".join(written) + "\n")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, default=config.SPLITS_DIR)
     ap.add_argument("--quiet", action="store_true", help="skip the statistics report")
+    ap.add_argument("--candidate-samples", action="store_true", help="write the fixed candidate-generation samples")
     args = ap.parse_args()
+    if args.candidate_samples:
+        return write_candidate_samples(args.out)
 
     s1 = data.load_source("train", 1, columns=["entity_id", "country"])
     splits = make_splits(s1)

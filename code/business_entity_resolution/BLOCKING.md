@@ -1,10 +1,11 @@
 # Blocking / candidate generation
 
-Code: `src/ber/blocking.py`, `scripts/05_block.py`, settings in `src/ber/config.py` (`BLOCK_*`).
+Code: `src/ber/blocking.py`, `scripts/06_block.py`, settings in `src/ber/config.py` (`BLOCK_*`).
+Run order: `05_learn_tables.py` (Stage 2, provides `addr_state_canon`) before `06_block.py`.
 Inputs: `data/clean` (NORMALIZE_VERSION 1.2.1, contract columns only) and `data/splits`.
 Output: `data/cand/{split}_candidates.parquet`, `output/candidate_pairs.tsv` (test).
 
-Labels (the ground truth) are read only by the evaluation in `05_block.py`; no pass uses them.
+Labels (the ground truth) are read only by the evaluation in `06_block.py`; no pass uses them.
 
 ## Passes
 
@@ -39,21 +40,52 @@ Each text is hashed once into cached shards of raw counts (`data/cand/cache/{spl
 ~21 GB for train+test), so later runs only load them. Memory is bounded by BLOCK_QUERY_CHUNK and
 BLOCK_SHARD_ROWS; peak RSS on the Mac stays under ~2.5 GB.
 
-## Candidate file (`data/cand/{split}_candidates.parquet`)
+## Candidate files: schema for feature building
 
-One row per (S1, candidate) pair, unique.
+Files (all in `data/cand/`, i.e. `CAND_PERSIST_DIR`):
 
-| column | type | meaning |
+| file | queries | use |
 |---|---|---|
-| s1_id, cand_id | str | S1 entity and S2/S3 candidate |
-| country | str | shared country (never crossed) |
-| in_p1, in_p2, in_p3, in_p4 | bool | which passes produced the pair |
-| p1_cos, p2_cos | float32 | exact P1 / P2 cosine, filled for EVERY pair (also for pairs another pass found) |
-| p1_rank | int32 | rank of the candidate in the S1's P1 list (1 = best); null if not in P1 |
-| p1_rank_rev | int32 | rank of the S1 in the candidate's reverse P1 list (P4); null if not in P4 |
-| p2_rank | int32 | rank in the S1's P2 list; null if not in P2 |
+| `cand_train_200k_candidates.parquet` | `data/splits/cand_train_200k.txt` (200,000 train_ids S1) | model training |
+| `cand_val_50k_candidates.parquet` | `data/splits/cand_val_50k.txt` (50,000 val_ids S1) | model validation |
+| `train_candidates.parquet` | every train S1 (Colab) | optional, larger training set |
+| `test_candidates.parquet` | every test S1 (Colab) | inference; also `output/candidate_pairs.tsv` |
+| `dev/*.parquet` | 20k dev samples | blocking research only: kept at BLOCK_KMAX, NOT the final k |
 
-Cosine is symmetric, so the P1 cosine is the same in both directions; the two ranks differ.
+**k must stay identical across train, val and test.** The rank columns (and which pairs exist at
+all) depend on BLOCK_K / BLOCK_P4_MAX_PER_S1 / BLOCK_DF_CAP / BLOCK_RETRIEVE_M: a model trained on
+k=50 ranks would see a different distribution if test used another k. Every full run records these
+settings in its parts folder and refuses to resume with different ones; if they ever change, rebuild
+ALL candidate files.
+
+One row per (S1, candidate) pair; the pair is unique. Pairs never cross country. An S1 with no
+candidates has no rows (the official TSV still gets an empty row for it).
+
+| column | type | null? | meaning |
+|---|---|---|---|
+| `s1_id` | str | never | S1 entity (query) |
+| `cand_id` | str | never | S2 or S3 record (`S2-...` / `S3-...`) |
+| `country` | str | never | the shared country (blocking key) |
+| `in_p1` | bool | never | found by P1: in the S1's top-`k1` by name+address cosine |
+| `in_p2` | bool | never | found by P2: in the S1's top-`k2` by name-only cosine |
+| `in_p3` | bool | never | shares a P3 key: same house number AND (same `addr_state_canon` or a shared address word of >= 4 letters), block size <= 20 |
+| `in_p4` | bool | never | found by P4: the S1 is in the candidate's top-`k4` S1 list (reverse P1), within the per-S1 cap of 100 |
+| `p1_cos` | float32 | never | exact TF-IDF cosine of the P1 texts (`name_core + addr_core`), computed for every pair whatever pass found it; symmetric |
+| `p2_cos` | float32 | never | exact TF-IDF cosine of the P2 texts (`name_core` + `name_nospace` + `name_domain_stem`), for every pair |
+| `p1_rank` | int32 | if not in P1 | rank of the candidate among the S1's P1 results, 1 = best, <= k1 |
+| `p1_rank_rev` | int32 | if not in P4 | rank of the S1 among the candidate's reverse P1 results, 1 = best, <= k4 |
+| `p2_rank` | int32 | if not in P2 | rank of the candidate among the S1's P2 results, <= k2 |
+
+Notes for features:
+- A null rank means "not in that pass's list", i.e. worse than rank k. Encode it as k+1 (or a flag),
+  not as 0.
+- Ranks are within the retrieved set (approximate retrieval, exact re-rank; see above); cosines are exact.
+- `p1_cos` of a P3-only or P4-only pair is often low: those passes exist to catch pairs whose text
+  differs (Indic-script names, empty addresses).
+- Useful derived features: rank of the candidate among the S1's candidates by `p1_cos`, number of
+  candidates of the S1, `p1_rank_rev == 1` (mutual best), counts of passes.
+- Everything else (names, addresses, house numbers, legal families, states) comes from joining
+  `data/clean/*` and `data/clean/stage2_*` on `s1_id` / `cand_id` (CLEANING.md, "Cleaned data contract").
 
 ## Chosen settings (`src/ber/config.py`)
 
@@ -105,6 +137,49 @@ Indic-script pairs that no text pass finds. The union misses 1,385 of 69,387 tru
 listed with their cleaned fields in `reports/blocking_train_val_ids_n20000.md`. Most are Indic-script
 names whose addresses share only the house number and a city token (a P3 block larger than the cap),
 or noisy S2/S3 names with an empty address.
+
+## Oracle ceiling (blocking-imposed upper bound)
+
+Macro-F0.5 (the challenge metric, EDA 3.6) of a perfect matcher that can only choose among our
+candidates: precision 1, recall = blocking recall per S1; a singleton scores 1 (nothing predicted);
+an S1 with no true match among its candidates scores 0.
+
+| query set | group | entities | singletons | oracle macro-F0.5 |
+|---|---|---|---|---|
+| val_ids dev sample (20k) | ALL | 20,000 | 5.5% | 0.9930 |
+| | US | 12,026 | 5.7% | 0.9975 |
+| | India | 7,974 | 5.3% | 0.9861 |
+| | ALL, P1 alone k=50 | 20,000 | 5.5% | 0.9810 |
+| cand_val_50k (full mode) | ALL | 50,000 | 5.5% | 0.9928 |
+| | US | 29,998 | 5.5% | 0.9977 |
+| | India | 20,002 | 5.4% | 0.9855 |
+
+So blocking costs at most ~0.7 points of macro-F0.5 (1.4 in India); the rest is up to the matcher.
+
+## Candidate sets for model training and validation
+
+Built with `--mode full` (final k, identical settings for every split) on frozen query samples
+(`data/splits/SPLITS.md`, md5 rule):
+
+| file | queries | pairs | per S1: mean / p50 / p95 / max | S1 without candidates |
+|---|---|---|---|---|
+| cand_train_200k_candidates.parquet | 200,000 train_ids | 17,738,656 | 88.7 / 83 / 137 / 199 | 0 |
+| cand_val_50k_candidates.parquet | 50,000 val_ids | 4,433,888 | 88.7 / 82 / 137 / 205 | 0 |
+
+Recall on cand_val_50k (full mode, `reports/blocking_cand_val_50k_val.md`):
+
+EDA baseline (raw text, P1 alone, k=50): 0.9451 overall, US 0.9757, India 0.8998.
+
+| candidates | group | true_pairs | pair_recall | entities | entity_all_found |
+|---|---|---|---|---|---|
+| union (final k) | ALL | 173019 | 0.9795 | 47253 | 0.9392 |
+| union (final k) | US | 103490 | 0.9921 | 28335 | 0.9720 |
+| union (final k) | India | 69529 | 0.9609 | 18918 | 0.8901 |
+| union (final k) | Indic-script S2/S3 names | 11934 | 0.8695 | 6063 | 0.8054 |
+| P1 alone, k=50 (EDA baseline set-up) | ALL | 173019 | 0.9474 | 47253 | 0.8556 |
+| P1 alone, k=50 (EDA baseline set-up) | India | 69529 | 0.9000 | 18918 | 0.7422 |
+| P1 alone, k=50 (EDA baseline set-up) | US | 103490 | 0.9792 | 28335 | 0.9313 |
+| P1 alone, k=50 (EDA baseline set-up) | Indic-script S2/S3 names | 11934 | 0.7078 | 6063 | 0.6000 |
 
 ## Tuning (train_ids sample)
 
@@ -187,55 +262,82 @@ is a one-line change in config.py if we want it for test.
 | step | time |
 |---|---|
 | vector cache, train + test, P1 + P2 (once) | ~8 min, 21 GB on the T7 |
-| P3 for 20k queries | ~1 min |
 | P4 reverse cache, train (every S2/S3 record; once per split) | India 39 min, US 65 min |
-| P1 + P2 + cosine fill, 20k queries | ~7 min |
-| exact check (2,000 queries) + pool experiment | ~15 min |
+| full mode, 10,000 queries (P4 cached) | 766 s: per chunk fixed ~2-3 min (P3 pool scan, loading 13 shards twice), search ~6 ms/query (US), ~4.5 ms/query (India) |
+| full mode, cand_train_200k (200,000 queries) | 32 min (1,932 s); 17.7M pairs; peak RSS < 1 GB |
+| full mode, cand_val_50k (50,000 queries) | 23 min (1,353 s); 4.4M pairs |
+| dev 20k queries (KMAX) + report | ~8 min |
 
-Full mode, estimated from these (not measured): P4 is the same order of work as a full forward P1
-(all S1 x all S2/S3 of a country), so train ~4-5 h and test ~4 h on 8 cores; time scales roughly
-with 1/cores. Output: ~89 candidates per S1, i.e. ~196M rows for train and ~155M for test.
+`--probe` measures one shard on the machine it runs on and extrapolates (fixed cost per chunk x
+shard, per-query cost x shards, P3 per chunk, and the P4 cache if missing). On the Mac it predicted
+0.48 h for cand_train_200k; the run took 0.54 h, so read probe estimates as ~10% low.
+Probe for every test S1 on the Mac (8 cores): **5.1 h** (P1 2.2 h, P2 0.7 h, P3 0.4 h, fill 0.1 h,
+building the test P4 cache 1.6 h), i.e. ~5.5 h real. Run `--probe` on the Colab runtime before starting.
+
+P3 has a large fixed cost per chunk that varies between runs on the Mac (1 to 9 min for the same
+India chunk), apparently disk/page-cache effects of reading the S2/S3 files from the T7; on Colab's
+local disk it should be stable.
 
 ## Commands
 
 ```bash
-python scripts/05_block.py --split train --mode dev --queries train_ids --exact-check 2000 --pool-experiment
-python scripts/05_block.py --split train --mode dev --queries val_ids
-python scripts/05_block.py --split train --mode dev --queries val_ids --eval-only   # re-score saved candidates
-python scripts/05_block.py --split train --mode full
-python scripts/05_block.py --split test  --mode full   # also writes output/candidate_pairs.tsv, validated
+# research (query samples, recall report)
+python scripts/06_block.py --split train --mode dev --queries train_ids --exact-check 2000 --pool-experiment
+python scripts/06_block.py --split train --mode dev --queries val_ids
+python scripts/06_block.py --split train --mode dev --queries val_ids --eval-only   # re-score saved candidates
+
+# final-k candidate files (resumable: re-run the same command after an interruption)
+python scripts/02_make_splits.py --candidate-samples                 # once; frozen sample ID lists
+python scripts/06_block.py --split train --mode full --queries cand_train_200k
+python scripts/06_block.py --split train --mode full --queries cand_val_50k
+python scripts/06_block.py --split test  --mode full --probe         # estimate before committing hours
+python scripts/06_block.py --split test  --mode full                 # + output/candidate_pairs.tsv, validated
+python scripts/06_block.py --split train --mode full                 # optional: every train S1
 ```
+
+### How full mode survives interruptions
+
+- Queries are split per country into chunks of BLOCK_QUERY_CHUNK (sorted by entity_id, so chunk i
+  is always the same queries). Each chunk is written atomically to
+  `{CAND_PERSIST_DIR}/{name}.parts/{country}_{i}.parquet`; on restart, existing chunks are skipped.
+- `{name}.parts/run.json` records the settings and a hash of the query list; resuming with anything
+  different is refused (delete the parts folder to start over).
+- The P4 reverse cache is written one file per S2/S3 shard, so it resumes too.
+- When every chunk exists, the merge step concatenates them (streaming), checks the row count and
+  deletes the parts. For the test split it then writes and validates `output/candidate_pairs.tsv`.
 
 ## Running --full on Colab
 
-Full mode searches every S1 entity (train 2.2M, test 1.7M) against its country's full S2+S3 pool.
-It needs more cores and RAM than the Mac. Use a High-RAM CPU runtime (more cores = faster:
-sparse_dot_topn and the numba kernel use every core).
-
-Put on Google Drive first (from the Mac): `data/clean/` (the 6 Stage 1 files and 6 `stage2_*` files),
-`data/parquet/train_ground_truth_long.parquet` (train recall report only) and `data/splits/`.
-The vector cache (`data/cand/cache`, ~21 GB) is rebuilt on Colab in ~10 min; copying it is optional.
+Put on Google Drive first (from the Mac): `data/clean/` (6 Stage 1 files + 6 `stage2_*`),
+`data/splits/`, and for train reports `data/parquet/train_ground_truth_long.parquet`.
+Optionally the P4 caches `data/cand/cache/{split}/p4_*` (train: ~1.7 h on the Mac).
+Work on the LOCAL disk (Drive-mounted paths are far too slow for the random reads of the vector
+cache), but point `BER_CAND_PERSIST_DIR` at Drive so chunk files and the P4 cache survive a
+disconnect.
 
 ```bash
-# 1. code + environment
-!git clone <repo-url> ber && cd ber/code/business_entity_resolution && pip install -q -r requirements.txt && pip install -q -e .
-
-# 2. data from Drive to the LOCAL disk (Drive-mounted paths are far too slow for random reads)
+# 1. code + environment (repeat after every disconnect)
+!git clone <repo-url> /content/ber && cd /content/ber/code/business_entity_resolution && pip install -q -r requirements.txt && pip install -q -e .
 from google.colab import drive; drive.mount('/content/drive')
-!mkdir -p /content/ber/data/parquet /content/ber/data/cand /content/ber/output
+!mkdir -p /content/ber/data/parquet /content/ber/data/cand /content/ber/output /content/drive/MyDrive/ber_data/cand
 !cp -r /content/drive/MyDrive/ber_data/clean  /content/ber/data/clean
 !cp -r /content/drive/MyDrive/ber_data/splits /content/ber/data/splits
 !cp /content/drive/MyDrive/ber_data/parquet/train_ground_truth_long.parquet /content/ber/data/parquet/
 
-# 3. run (BER_ROOT points config.py at /content/ber; raise the memory guard to the runtime's RAM)
+# 2. settings for every command below
 %cd /content/ber/code/business_entity_resolution
-!BER_ROOT=/content/ber BER_MEM_LIMIT_GIB=40 python scripts/05_learn_tables.py   # only if stage2_* were not copied
-!BER_ROOT=/content/ber BER_MEM_LIMIT_GIB=40 python scripts/05_block.py --split train --mode full
-!BER_ROOT=/content/ber BER_MEM_LIMIT_GIB=40 python scripts/05_block.py --split test  --mode full
+%env BER_ROOT=/content/ber
+%env BER_CAND_PERSIST_DIR=/content/drive/MyDrive/ber_data/cand
+%env BER_MEM_LIMIT_GIB=40
 
-# 4. outputs back to Drive
-!mkdir -p /content/drive/MyDrive/ber_data/cand /content/drive/MyDrive/ber_output
-!cp /content/ber/data/cand/*_candidates.parquet /content/drive/MyDrive/ber_data/cand/
-!cp /content/ber/output/candidate_pairs.tsv /content/drive/MyDrive/ber_output/
-!cp reports/blocking_train_full_val_ids.md /content/drive/MyDrive/ber_output/
+# 3. estimate, then run (the first call builds the vector cache, ~10 min on the local disk)
+!python scripts/06_block.py --split test --mode full --probe
+!python scripts/06_block.py --split test --mode full        # re-run the same line after a disconnect
+!cp /content/ber/output/candidate_pairs.tsv /content/drive/MyDrive/ber_data/
+
+# optional: every train S1 (the 200k/50k sets are already built on the Mac)
+!python scripts/06_block.py --split train --mode full
 ```
+
+Outputs land in `/content/drive/MyDrive/ber_data/cand/` (`test_candidates.parquet`, parts while
+running, P4 cache under `cache/`). Copy them to `data/cand/` on the T7 afterwards.

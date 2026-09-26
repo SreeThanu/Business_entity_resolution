@@ -25,11 +25,11 @@ ber/                                  project ROOT (git repo)
     src/ber/splits.py                 md5-based split rule
     scripts/00_check_raw.py           checksums + TSV field/UTF-8/row-count checks
     scripts/01_convert_to_parquet.py
-    scripts/02_make_splits.py
+    scripts/02_make_splits.py         frozen splits (+ --candidate-samples)
     scripts/03_clean.py               Stage 1 cleaning -> data/clean/{split}_source{n}.parquet
     scripts/04_eval_cleaning.py       Stage 3 evaluation -> reports/stage3_cleaning_eval.md
     scripts/05_learn_tables.py        Stage 2 state table -> data/dicts, data/clean/stage2_*
-    scripts/05_block.py               blocking -> data/cand/, output/candidate_pairs.tsv (run AFTER 05_learn_tables)
+    scripts/06_block.py               blocking -> data/cand/, output/candidate_pairs.tsv
     src/ber/blocking.py               the four blocking passes, vector cache, recall helpers
     src/ber/normalize.py, lexicon.py  Stage 1 rules and hand-written lists
     src/ber/lookup.py                 Stage 2 learning (train_ids only)
@@ -67,12 +67,16 @@ python scripts/02_make_splits.py                  # < 1 min
 
 # 5. Cleaning (all under a 5 GiB RSS guard; peak ~1.3 GiB on an 8 GB MacBook)
 python scripts/03_clean.py                        # Stage 1, ~5 min for the 6 files
+python scripts/04_eval_cleaning.py                # Stage 3 report, ~1 min (needs Stage 1 only)
 python scripts/05_learn_tables.py                 # Stage 2, ~15 s (needs Stage 1)
-python scripts/04_eval_cleaning.py                # Stage 3 report, ~1 min
 
-# 6. Blocking (see BLOCKING.md). Mac: query samples; Colab: --mode full
-python scripts/05_block.py --split train --mode dev --queries train_ids   # first run ~1.5 h (builds caches)
-python scripts/05_block.py --split train --mode dev --queries val_ids     # ~10 min once caches exist
+# 6. Blocking (see BLOCKING.md). Mac: samples; Colab: every test S1
+python scripts/06_block.py --split train --mode dev --queries train_ids   # first run ~2 h (builds caches)
+python scripts/06_block.py --split train --mode dev --queries val_ids     # ~10 min once caches exist
+python scripts/02_make_splits.py --candidate-samples                      # frozen 200k / 50k query samples
+python scripts/06_block.py --split train --mode full --queries cand_train_200k   # model training candidates
+python scripts/06_block.py --split train --mode full --queries cand_val_50k      # model validation candidates
+python scripts/06_block.py --split test  --mode full --probe              # time estimate (then run on Colab)
 
 # 7. Tests (~2 min; the raw row-count tests skip with a message if the raw dataset is missing)
 python -m pytest -q

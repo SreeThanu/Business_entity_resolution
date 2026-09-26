@@ -41,3 +41,17 @@ def make_splits(s1: pd.DataFrame) -> dict[str, list[str]]:
         out[f"fold_{slug}_train"] = sorted(s1.loc[in_c & ~val, "entity_id"])
         out[f"fold_{slug}_val"] = sorted(s1.loc[in_c & val, "entity_id"])
     return out
+
+
+# Fixed query samples for candidate generation (model training / validation). Frozen like the splits.
+CANDIDATE_SAMPLES = {  # name: (source ID list, size, salt)
+    "cand_train_200k": ("train_ids", 200_000, "cand_train"),
+    "cand_val_50k": ("val_ids", 50_000, "cand_val"),
+}
+
+
+def hash_sample(ids: list[str], n: int, salt: str) -> list[str]:
+    """The n IDs with the smallest md5(salt:id): a fixed sample that depends only on the ID strings.
+    Returned sorted, like the other ID lists."""
+    ranked = sorted(ids, key=lambda e: hashlib.md5(f"{salt}:{e}".encode()).hexdigest())
+    return sorted(ranked[:n])

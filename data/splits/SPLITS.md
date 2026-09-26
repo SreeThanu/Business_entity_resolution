@@ -44,3 +44,16 @@ expected, because S2/S3 records are shared and only the S1 entities are split.
 ## Files
 
 One sorted train-S1 `entity_id` per line. Load with `ber.data.load_split_ids("val_ids")`.
+
+## Candidate-generation samples (FROZEN)
+
+Fixed query samples for building model training / validation candidate sets (BLOCKING.md):
+
+| file | size | drawn from | rule |
+|---|---|---|---|
+| cand_train_200k.txt | 200,000 | train_ids | the 200,000 IDs with the smallest md5("cand_train:" + id) |
+| cand_val_50k.txt | 50,000 | val_ids | the 50,000 IDs with the smallest md5("cand_val:" + id) |
+
+Written by `python scripts/02_make_splits.py --candidate-samples` (`ber.splits.hash_sample`,
+refuses to overwrite); `candidate_samples.sha256` (committed) is the reference, checked by
+`tests/test_data.py`.

@@ -162,3 +162,19 @@ def test_splits_reproducible(tmp_path):
         b = (outs[1] / f"{name}.txt").read_bytes()
         assert a == b, name
         assert a == config.split_ids_path(name).read_bytes(), f"{name} differs from frozen copy"
+
+
+# --- candidate-generation samples -------------------------------------------------------------
+
+@pytest.mark.skipif(not (config.SPLITS_DIR / "candidate_samples.sha256").exists(),
+                    reason="run scripts/02_make_splits.py --candidate-samples")
+def test_candidate_samples_frozen_and_inside_their_split(splits):
+    from ber.splits import CANDIDATE_SAMPLES, hash_sample
+    for line in (config.SPLITS_DIR / "candidate_samples.sha256").read_text().splitlines():
+        digest, name = line.split()
+        assert hashlib.sha256((config.SPLITS_DIR / name).read_bytes()).hexdigest() == digest, name
+    for name, (source, n, salt) in CANDIDATE_SAMPLES.items():
+        ids = data.load_split_ids(name)
+        assert len(ids) == n == len(set(ids))
+        assert set(ids) <= splits[source]
+        assert ids == hash_sample(sorted(splits[source]), n, salt)   # reproducible from the rule

@@ -20,9 +20,12 @@ n-grams, and a running top-k by exact cosine is kept. Memory is bounded by the c
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import time
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from multiprocessing import get_context
@@ -42,6 +45,7 @@ N_THREADS = os.cpu_count() or 2
 _HV = HashingVectorizer(analyzer="char_wb", ngram_range=(3, 5), lowercase=False,
                         n_features=config.BLOCK_N_FEATURES, alternate_sign=False, norm=None, dtype=np.float32)
 KINDS = ("p1", "p2")
+TIMES: dict[str, float] = defaultdict(float)  # seconds per step, for throughput logs and --probe
 
 
 def log(msg: str) -> None:
@@ -255,12 +259,18 @@ class TopK:
 def search_shard(top: TopK, Qf, Qc, Xf, Xc, offset: int, m: int) -> None:
     """Retrieve top-m rows of one pool shard per query by capped score, re-score exactly, merge
     the best top.k of them (by exact cosine) into the running top-k."""
-    R = sp_matmul_topn(Qc, Xc.T.tocsr(), top_n=m, n_threads=N_THREADS)
-    R = R.tocsr()
+    t = time.time()
+    XcT = Xc.T.tocsr()
+    TIMES["transpose"] += time.time() - t
+    t = time.time()
+    R = sp_matmul_topn(Qc, XcT, top_n=m, n_threads=N_THREADS).tocsr()
+    TIMES["retrieve"] += time.time() - t
+    t = time.time()
     rows = np.repeat(np.arange(R.shape[0]), np.diff(R.indptr))
     cols = R.indices.astype(np.int64)
     exact = rowdot(Qf, Xf, rows, cols)
     top.merge(rows, cols + offset, exact, top.k)
+    TIMES["rerank"] += time.time() - t
 
 
 def search(store: VectorStore, Qf, Qc, pool_sources: tuple[int, ...], country: str, k: int, m: int,
@@ -270,7 +280,9 @@ def search(store: VectorStore, Qf, Qc, pool_sources: tuple[int, ...], country: s
     pool_store = pool_store or store
     top, offset = TopK(Qf.shape[0], k), 0
     for sh in pool_store.shards(pool_sources, country):
+        t = time.time()
         Xf, Xc = pool_store.load(sh, idf_from=store)
+        TIMES["load"] += time.time() - t
         search_shard(top, Qf, Qc, Xf, Xc, offset, max(m, k))
         offset += sh.n
         del Xf, Xc
@@ -379,17 +391,28 @@ def forward(stores: dict[str, VectorStore], country: str, q_ids: pl.Series, kmax
     return out
 
 
-def reverse_all(store: VectorStore, country: str, k: int) -> pl.DataFrame:
-    """P4 for every S2/S3 record of one country: cand_id, q_id (S1), p1_cos, p1_rank_rev."""
-    s1 = pool_ids(store, (1,), country)
-    frames = []
+def reverse_all(store: VectorStore, country: str, k: int, out_dir: Path) -> None:
+    """P4 for every S2/S3 record of one country, one file per S2/S3 shard in out_dir
+    (cand_id, q_id = S1, p1_cos, p1_rank_rev). Shards already written are skipped (resumable)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    s1 = None
     for sh in store.shards((2, 3), country):
+        path = out_dir / f"{sh.path}.parquet"
+        if path.exists():
+            continue
+        s1 = s1 if s1 is not None else pool_ids(store, (1,), country)
+        t = time.time()
         Qf, Qc = store.load(sh)
         top = search(store, Qf, Qc, (1,), country, k, config.BLOCK_RETRIEVE_M["p4"])
-        f = topk_frame(store.ids(sh), top, s1, "p1_cos", "p1_rank_rev")
-        frames.append(f.rename({"q_id": "cand_id", "cand_id": "q_id"}))
-        log(f"P4 {store.split} {country} {sh.path}: {sh.n:,} reverse queries")
-    return pl.concat(frames) if frames else pl.DataFrame()
+        f = topk_frame(store.ids(sh), top, s1, "p1_cos", "p1_rank_rev").rename({"q_id": "cand_id", "cand_id": "q_id"})
+        _atomic_write(f, path)
+        log(f"P4 {store.split} {country} {sh.path}: {sh.n:,} reverse queries ({time.time() - t:.0f}s)")
+
+
+def _atomic_write(df: pl.DataFrame, path: Path) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    df.write_parquet(tmp)
+    tmp.replace(path)
 
 
 def fill_cosines(stores: dict[str, VectorStore], country: str, pairs: pl.DataFrame) -> pl.DataFrame:
@@ -461,86 +484,198 @@ def stores(split: str) -> dict[str, VectorStore]:
 
 
 def p4_path(split: str, country: str) -> Path:
-    return (config.CAND_DIR / "cache" / split /
-            f"p4_{slug(country)}_k{config.BLOCK_KMAX['p4']}_cap{config.BLOCK_DF_CAP}_m{config.BLOCK_RETRIEVE_M['p4']}.parquet")
+    """P4 cache for one country: a folder with one file per S2/S3 shard (older runs: one file with
+    the same name + .parquet, still read). Keyed on every setting that changes the result."""
+    return (config.CAND_PERSIST_DIR / "cache" / split /
+            f"p4_{slug(country)}_k{config.BLOCK_KMAX['p4']}_cap{config.BLOCK_DF_CAP}_m{config.BLOCK_RETRIEVE_M['p4']}")
+
+
+def p4_ready(split: str, st: VectorStore, country: str) -> bool:
+    d = p4_path(split, country)
+    return (d.parent / f"{d.name}.parquet").exists() or all(
+        (d / f"{sh.path}.parquet").exists() for sh in st.shards((2, 3), country))
 
 
 def p4_cached(split: str, st: VectorStore, country: str) -> pl.LazyFrame:
-    """Reverse top-KMAX for every S2/S3 record of the country (independent of the queries), cached;
-    returned lazily so each query chunk reads only its own rows."""
-    path = p4_path(split, country)
-    if not path.exists():
+    """Reverse top-KMAX for every S2/S3 record of the country (independent of the queries); built
+    and cached on first use, resumable per shard; returned lazily so each chunk reads only its rows."""
+    d = p4_path(split, country)
+    legacy = d.parent / f"{d.name}.parquet"
+    if legacy.exists():
+        return pl.scan_parquet(legacy)
+    if not p4_ready(split, st, country):
         t = time.time()
-        f = reverse_all(st, country, config.BLOCK_KMAX["p4"])
-        f.write_parquet(path)
-        log(f"P4 {split} {country}: {f.height:,} reverse pairs in {time.time() - t:.0f}s")
-    return pl.scan_parquet(path)
+        reverse_all(st, country, config.BLOCK_KMAX["p4"], d)
+        log(f"P4 {split} {country}: cache complete ({time.time() - t:.0f}s)")
+    return pl.scan_parquet(d / "*.parquet")
+
+
+def process_chunk(split: str, st: dict[str, VectorStore], country: str, q: pl.Series, k: dict[str, int],
+                  final: bool) -> pl.DataFrame:
+    """All four passes for one chunk of S1 queries of one country. final=True applies select_k
+    (incl. the P4 cap); every S1's pairs are in its chunk, so that equals applying it globally."""
+    t0, times0 = time.time(), dict(TIMES)
+    p3, p3_stats = p3_pairs(split, q)
+    TIMES["p3"] += time.time() - t0
+    fwd = forward(st, country, q, k)
+    p4q = p4_cached(split, st["p1"], country).filter(
+        (pl.col("p1_rank_rev") <= k["p4"]) & pl.col("q_id").is_in(q.implode())).collect()
+    u = union(country, fwd, p3, p4q)
+    t = time.time()
+    u = fill_cosines(st, country, u.rename({"s1_id": "q_id"})).rename({"q_id": "s1_id"})
+    TIMES["fill"] += time.time() - t
+    if final:
+        u = select_k(u, k)
+    steps = {key: round(TIMES[key] - times0.get(key, 0.0)) for key in ("p3", "load", "transpose", "retrieve", "rerank", "fill")}
+    log(f"{country}: {len(q):,} queries -> {u.height:,} candidates in {time.time() - t0:.0f}s {steps}; "
+        f"P3 dropped {p3_stats['blocks_dropped']:,}/{p3_stats['blocks']:,} blocks")
+    return u
 
 
 def run_queries(split: str, st: dict[str, VectorStore], queries: pl.DataFrame, k: dict[str, int],
-                parts_dir: Path | None = None, final: bool = False) -> pl.DataFrame | None:
-    """All passes for the given S1 queries (entity_id, country), chunked per country.
-
-    final=True applies select_k (incl. the P4 cap) per chunk; every S1's pairs are in one chunk, so
-    this equals applying it to the whole set. With parts_dir, each chunk is written to
-    parts_dir/part-*.parquet and nothing is kept in memory (full mode); otherwise the frame is returned.
-    """
-    p3, p3_stats = p3_pairs(split, queries["entity_id"])
-    log(f"P3: {p3.height:,} pairs, stats {p3_stats}")
-    out, n_part = [], 0
+                final: bool = False) -> pl.DataFrame | None:
+    """In-memory run for a query sample (dev mode): queries = entity_id, country."""
+    out = []
     pool_countries = set(st["p1"].countries(2)) | set(st["p1"].countries(3))
     for country in sorted(queries["country"].unique()):
         if country not in pool_countries:
             log(f"{country}: no S2/S3 pool, skipped")
             continue
-        q_all = queries.filter(pl.col("country") == country)["entity_id"]
-        p4 = p4_cached(split, st["p1"], country)
+        q_all = queries.filter(pl.col("country") == country)["entity_id"].sort()
         for a in range(0, len(q_all), config.BLOCK_QUERY_CHUNK):
-            q = q_all.slice(a, config.BLOCK_QUERY_CHUNK)
-            t = time.time()
-            fwd = forward(st, country, q, k)
-            p4q = p4.filter((pl.col("p1_rank_rev") <= k["p4"]) & pl.col("q_id").is_in(q.implode())).collect()
-            u = union(country, fwd, p3.filter(pl.col("q_id").is_in(q.implode())), p4q)
-            u = fill_cosines(st, country, u.rename({"s1_id": "q_id"})).rename({"q_id": "s1_id"})
-            if final:
-                u = select_k(u, k)
-            if parts_dir is not None:
-                u.write_parquet(parts_dir / f"part-{n_part:04d}.parquet")
-                n_part += 1
-            else:
-                out.append(u)
-            log(f"{country} queries {a:,}-{a + len(q):,}: {u.height:,} candidates ({time.time() - t:.0f}s)")
-    if parts_dir is not None:
-        return None
+            out.append(process_chunk(split, st, country, q_all.slice(a, config.BLOCK_QUERY_CHUNK), k, final))
     return pl.concat(out) if out else None
 
 
-def run_full(split: str, tsv: Path | None = None) -> Path:
-    """Every S1 of the split at config.BLOCK_K -> config.cand_path(split); optionally the official
-    candidate TSV (validated). Chunks go to a parts folder first, then are concatenated on disk."""
+def run_fingerprint(split: str, queries: pl.DataFrame) -> dict:
+    ids = "\n".join(sorted(queries["entity_id"].to_list())).encode()
+    return {"NORMALIZE_VERSION": NORMALIZE_VERSION, "split": split, "k": config.BLOCK_K,
+            "p4_cap": config.BLOCK_P4_MAX_PER_S1, "p3_max_block": config.BLOCK_P3_MAX_BLOCK,
+            "df_cap": config.BLOCK_DF_CAP, "retrieve_m": config.BLOCK_RETRIEVE_M,
+            "query_chunk": config.BLOCK_QUERY_CHUNK, "queries_sha256": hashlib.sha256(ids).hexdigest()}
+
+
+def run_candidates(split: str, queries: pl.DataFrame, name: str, tsv: Path | None = None) -> Path:
+    """Resumable full run: final-k candidates for `queries` (entity_id, country) of `split`.
+
+    Each (country, chunk) goes to CAND_DIR/{name}.parts/{country}_{i}.parquet (written atomically);
+    chunks that already exist are skipped, so a run can be restarted after a disconnect. The parts
+    folder records the settings; resuming with different settings is refused. When every chunk is
+    present they are merged into CAND_DIR/{name}_candidates.parquet (row count checked) and, for the
+    official file, output/candidate_pairs.tsv is written and validated.
+    """
     st = stores(split)
-    s1 = pl.read_parquet(config.clean_source_path(split, 1), columns=["entity_id", "country"])
-    out = config.cand_path(split)
-    parts = out.with_suffix(".parts")
-    if parts.exists():
-        for f in parts.glob("part-*.parquet"):
-            f.unlink()
+    parts = config.CAND_PERSIST_DIR / f"{name}.parts"
     parts.mkdir(parents=True, exist_ok=True)
-    run_queries(split, st, s1, config.BLOCK_K, parts_dir=parts, final=True)
-    tmp = out.with_suffix(".tmp.parquet")
-    pl.scan_parquet(parts / "part-*.parquet").sink_parquet(tmp, compression="zstd")
-    tmp.replace(out)
-    for f in parts.glob("part-*.parquet"):
-        f.unlink()
-    parts.rmdir()
-    log(f"wrote {out} ({pl.scan_parquet(out).select(pl.len()).collect().item():,} rows)")
+    fp, manifest = run_fingerprint(split, queries), parts / "run.json"
+    if manifest.exists() and json.loads(manifest.read_text()) != fp:
+        raise RuntimeError(f"{parts} was made with different settings or queries; delete it to start over:\n"
+                           f"{manifest.read_text()}\nnow: {json.dumps(fp)}")
+    manifest.write_text(json.dumps(fp))
+    pool_countries = set(st["p1"].countries(2)) | set(st["p1"].countries(3))
+    expected = []
+    for country in sorted(queries["country"].unique()):
+        if country not in pool_countries:
+            log(f"{country}: no S2/S3 pool, its queries get no candidates")
+            continue
+        q_all = queries.filter(pl.col("country") == country)["entity_id"].sort()
+        n_chunks = math.ceil(len(q_all) / config.BLOCK_QUERY_CHUNK)
+        for i in range(n_chunks):
+            path = parts / f"{slug(country)}_{i:04d}.parquet"
+            expected.append(path)
+            if path.exists():
+                log(f"{path.name}: done earlier, skipped")
+                continue
+            q = q_all.slice(i * config.BLOCK_QUERY_CHUNK, config.BLOCK_QUERY_CHUNK)
+            _atomic_write(process_chunk(split, st, country, q, config.BLOCK_K, final=True), path)
+            log(f"{path.name}: chunk {i + 1}/{n_chunks} written")
+    out = merge_parts(parts, expected, config.CAND_PERSIST_DIR / f"{name}_candidates.parquet")
     if tsv is not None:
-        write_candidate_tsv(pl.scan_parquet(out), s1["entity_id"], tsv)
-        errors = validate_candidate_tsv(tsv, set(s1["entity_id"].to_list()))
+        write_candidate_tsv(pl.scan_parquet(out), queries["entity_id"], tsv)
+        errors = validate_candidate_tsv(tsv, set(queries["entity_id"].to_list()))
         if errors:
             raise ValueError(f"{tsv} failed validation: {errors}")
-        log(f"{tsv}: valid ({s1.height:,} rows)")
+        log(f"{tsv}: valid ({queries.height:,} rows)")
     return out
+
+
+def merge_parts(parts: Path, expected: list[Path], out: Path) -> Path:
+    """Concatenate the chunk files into one parquet (streaming), check the row count, then delete them."""
+    missing = [p.name for p in expected if not p.exists()]
+    if missing or not expected:
+        raise RuntimeError(f"cannot merge: missing chunks {missing}" if missing else "no chunks to merge")
+    n_parts = sum(pl.scan_parquet(p).select(pl.len()).collect().item() for p in expected)
+    tmp = out.with_name(out.name + ".tmp")
+    pl.scan_parquet(expected).sink_parquet(tmp, compression="zstd")
+    n_out = pl.scan_parquet(tmp).select(pl.len()).collect().item()
+    if n_out != n_parts:
+        raise RuntimeError(f"merge wrote {n_out:,} rows, parts have {n_parts:,}")
+    tmp.replace(out)
+    for p in expected:
+        p.unlink()
+    (parts / "run.json").unlink(missing_ok=True)
+    parts.rmdir()
+    log(f"merged {len(expected)} chunks -> {out} ({n_out:,} rows)")
+    return out
+
+
+# ---------------------------------------------------------------------------------------------
+# Probe: measured throughput -> estimated time of a full run
+# ---------------------------------------------------------------------------------------------
+
+def probe(split: str, queries: pl.DataFrame, n_probe: int = 5_000) -> dict:
+    """Time every step on ONE pool shard of the largest country and extrapolate to `queries`.
+
+    Measures per shard: load (+ weighting), transpose, and per query: retrieve + re-rank (P1, P2,
+    P4 reverse). The estimate is sum over countries of chunks x shards x fixed cost +
+    queries x shards x per-query cost, plus P3 per chunk and the P4 cache if it is not built yet.
+    """
+    t = time.time()
+    st = stores(split)
+    t_build = time.time() - t
+    countries = [c for c in sorted(queries["country"].unique()) if st["p1"].shards((2, 3), c)]
+    size = {c: sum(sh.n for sh in st["p1"].shards((2, 3), c)) for c in countries}
+    country = max(countries, key=size.get)
+    s1_all = pl.read_parquet(config.clean_source_path(split, 1), columns=["entity_id", "country"])
+    qs = s1_all.filter(pl.col("country") == country).sample(n_probe, seed=config.BLOCK_SEED)["entity_id"]
+    meas = {}
+    for kind in KINDS:
+        ids, Qf, Qc = load_rows(st[kind], 1, country, qs)
+        sh = st[kind].shards((2, 3), country)[0]
+        TIMES.clear()
+        t = time.time(); Xf, Xc = st[kind].load(sh); t_load = time.time() - t
+        top = TopK(Qf.shape[0], config.BLOCK_K[kind])
+        search_shard(top, Qf, Qc, Xf, Xc, 0, config.BLOCK_RETRIEVE_M[kind])
+        meas[kind] = {"fixed": t_load + TIMES["transpose"],
+                      "per_query": (TIMES["retrieve"] + TIMES["rerank"]) / len(ids) * config.BLOCK_SHARD_ROWS / sh.n}
+    # P4: reverse queries = rows of one pool shard against one S1 shard
+    sh = st["p1"].shards((2, 3), country)[0]
+    Qf, Qc = st["p1"].load(sh, rows=np.arange(min(n_probe, sh.n)))
+    s1sh = st["p1"].shards((1,), country)[0]
+    TIMES.clear()
+    t = time.time(); Xf, Xc = st["p1"].load(s1sh); t_load = time.time() - t
+    search_shard(TopK(Qf.shape[0], config.BLOCK_KMAX["p4"]), Qf, Qc, Xf, Xc, 0, config.BLOCK_RETRIEVE_M["p4"])
+    meas["p4"] = {"fixed": t_load + TIMES["transpose"],
+                  "per_query": (TIMES["retrieve"] + TIMES["rerank"]) / Qf.shape[0] * config.BLOCK_SHARD_ROWS / s1sh.n}
+    t = time.time(); p3_pairs(split, qs.head(1000)); t_p3 = time.time() - t
+
+    est = {"p1": 0.0, "p2": 0.0, "fill": 0.0, "p3": 0.0, "p4_cache": 0.0}
+    for c in countries:
+        nq = queries.filter(pl.col("country") == c).height
+        chunks = math.ceil(nq / config.BLOCK_QUERY_CHUNK)
+        n_pool_sh = len(st["p1"].shards((2, 3), c))
+        for kind in KINDS:
+            est[kind] += chunks * n_pool_sh * meas[kind]["fixed"] + nq * n_pool_sh * meas[kind]["per_query"]
+            est["fill"] += chunks * n_pool_sh * meas[kind]["fixed"]  # one more pass over the pool shards
+        est["p3"] += chunks * t_p3
+        if not p4_ready(split, st["p1"], c):
+            n_s1_sh = len(st["p1"].shards((1,), c))
+            est["p4_cache"] += n_pool_sh * n_s1_sh * meas["p4"]["fixed"] + size[c] * n_s1_sh * meas["p4"]["per_query"]
+    total = sum(est.values())
+    return {"probe_country": country, "probe_queries": n_probe, "cores": N_THREADS, "store_build_s": round(t_build),
+            "measured": {k: {kk: round(v, 6) for kk, v in m.items()} for k, m in meas.items()}, "p3_per_chunk_s": round(t_p3),
+            "queries": queries.height, "estimate_s": {k: round(v) for k, v in est.items()},
+            "estimate_total_h": round(total / 3600, 2)}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -562,6 +697,28 @@ def recall(cands: pl.DataFrame, truth: pl.DataFrame, by: list[str] | None = None
     er = ent.group_by(by).agg(entities=pl.len(), entity_all_found=pl.col("all_found").mean()) if by else \
         ent.select(entities=pl.len(), entity_all_found=pl.col("all_found").mean())
     return pr.join(er, on=by) if by else pl.concat([pr, er], how="horizontal")
+
+
+def oracle_f05(cands: pl.DataFrame, queries: pl.DataFrame, truth: pl.DataFrame, by: list[str] | None = None) -> pl.DataFrame:
+    """Macro-F0.5 of a perfect matcher restricted to the candidates: the blocking-imposed ceiling.
+
+    queries: s1_id (+ `by` columns), ALL queried S1s, singletons included. truth: s1_id, cand_id.
+    Per S1 (the challenge metric, EDA 3.6): no true match -> predicts nothing -> 1. Otherwise it
+    predicts exactly the true matches among its candidates: precision 1, recall r = found / true,
+    F0.5 = 1.25 r / (0.25 + r); nothing found -> 0.
+    """
+    by = by or []
+    t = truth.join(cands.select("s1_id", "cand_id").unique().with_columns(found=pl.lit(True)),
+                   on=["s1_id", "cand_id"], how="left").group_by("s1_id").agg(
+        n_true=pl.len(), n_found=pl.col("found").fill_null(False).sum())
+    per = (queries.select("s1_id", *by).join(t, on="s1_id", how="left")
+           .with_columns(pl.col("n_true").fill_null(0), pl.col("n_found").fill_null(0))
+           .with_columns(r=pl.col("n_found") / pl.col("n_true"))
+           .with_columns(f05=pl.when(pl.col("n_true") == 0).then(1.0).when(pl.col("n_found") == 0).then(0.0)
+                         .otherwise(1.25 * pl.col("r") / (0.25 + pl.col("r")))))
+    agg = [pl.len().alias("entities"), (pl.col("n_true") == 0).mean().alias("singleton_share"),
+           pl.col("f05").mean().alias("oracle_macro_f05")]
+    return per.group_by(by).agg(agg).sort(by) if by else per.select(agg)
 
 
 def cand_stats(cands: pl.DataFrame, queries: pl.Series) -> dict:

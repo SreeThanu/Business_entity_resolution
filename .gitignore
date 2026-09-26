@@ -5,6 +5,7 @@ data/*
 data/splits/*
 !data/splits/SPLITS.md
 !data/splits/splits.sha256
+!data/splits/candidate_samples.sha256
 !data/splits/make_splits.log
 
 # checksums/ IS committed (*.sha256 + check_raw.log): reference hashes for the raw dataset.

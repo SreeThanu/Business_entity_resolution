@@ -11,13 +11,24 @@ EDA baseline (raw text, P1 alone, k=50): 0.9451 overall, US 0.9757, India 0.8998
 | candidates | group | true_pairs | pair_recall | entities | entity_all_found |
 |---|---|---|---|---|---|
 | union (final k) | ALL | 69387 | 0.9800 | 18891 | 0.9416 |
-| union (final k) | US | 41705 | 0.9926 | 11341 | 0.9736 |
 | union (final k) | India | 27682 | 0.9611 | 7550 | 0.8934 |
+| union (final k) | US | 41705 | 0.9926 | 11341 | 0.9736 |
 | union (final k) | Indic-script S2/S3 names | 4814 | 0.8681 | 2444 | 0.8097 |
 | P1 alone, k=50 (EDA baseline set-up) | ALL | 69387 | 0.9488 | 18891 | 0.8596 |
 | P1 alone, k=50 (EDA baseline set-up) | India | 27682 | 0.9021 | 7550 | 0.7499 |
 | P1 alone, k=50 (EDA baseline set-up) | US | 41705 | 0.9798 | 11341 | 0.9326 |
 | P1 alone, k=50 (EDA baseline set-up) | Indic-script S2/S3 names | 4814 | 0.7073 | 2444 | 0.6060 |
+
+## Oracle ceiling (perfect matcher on these candidates)
+
+Macro-F0.5 with precision 1 and recall = blocking recall per S1; singletons score 1 (nothing predicted); an S1 with no true match among its candidates scores 0.
+
+| candidates | group | entities | singleton_share | oracle_macro_f05 |
+|---|---|---|---|---|
+| union (final k) | ALL | 20000 | 0.0554 | 0.9930 |
+| union (final k) | India | 7974 | 0.0532 | 0.9861 |
+| union (final k) | US | 12026 | 0.0570 | 0.9975 |
+| P1 alone, k=50 | ALL | 20000 | 0.0554 | 0.9810 |
 
 ## Candidates per S1 entity (final set)
 

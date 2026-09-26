@@ -1,13 +1,18 @@
 """Blocking / candidate generation (see BLOCKING.md).
 
     # Mac (8 GB): a query sample against the FULL S2+S3 pool, with the recall report
-    python scripts/05_block.py --split train --mode dev --queries train_ids      # tuning sample
-    python scripts/05_block.py --split train --mode dev --queries val_ids        # final dev numbers
-    python scripts/05_block.py --split train --mode dev --queries train_ids --pool-experiment --exact-check 2000
-    # Colab: every S1 query
-    python scripts/05_block.py --split train --mode full    # -> data/cand/train_candidates.parquet (+ val_ids recall)
-    python scripts/05_block.py --split test  --mode full    # -> data/cand/test_candidates.parquet + output/candidate_pairs.tsv
+    python scripts/06_block.py --split train --mode dev --queries train_ids      # tuning sample
+    python scripts/06_block.py --split train --mode dev --queries val_ids        # final dev numbers
+    python scripts/06_block.py --split train --mode dev --queries train_ids --pool-experiment --exact-check 2000
 
+    # final-k candidate files, resumable (re-run the same command after a disconnect)
+    python scripts/06_block.py --split train --mode full --queries cand_train_200k   # model training set
+    python scripts/06_block.py --split train --mode full --queries cand_val_50k      # model validation set
+    python scripts/06_block.py --split train --mode full                             # every train S1
+    python scripts/06_block.py --split test  --mode full    # every test S1 + output/candidate_pairs.tsv
+    python scripts/06_block.py --split test  --mode full --probe   # time one shard, print the estimate
+
+Outputs: data/cand/{name}_candidates.parquet, name = the --queries list or the split.
 Dev mode keeps every pass's top-KMAX with ranks, so any k up to KMAX can be evaluated from one run.
 Full mode keeps config.BLOCK_K. Labels are read only in the evaluation, never to make candidates.
 Memory guard: BER_MEM_LIMIT_GIB (default 5).
@@ -16,6 +21,7 @@ Memory guard: BER_MEM_LIMIT_GIB (default 5).
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -75,6 +81,16 @@ def evaluate(c: pl.DataFrame, queries: pl.DataFrame, k: dict[str, int], title: s
             recall_table(c.filter(pl.col("p1_rank") <= 50), truth, "P1 alone, k=50 (EDA baseline set-up)")]
     parts.append("## Recall\n\nEDA baseline (raw text, P1 alone, k=50): 0.9451 overall, US 0.9757, India 0.8998.\n\n"
                  + md(pl.concat(tabs)))
+
+    q = queries.rename({"entity_id": "s1_id"})
+    orc = pl.concat([
+        B.oracle_f05(final, q, truth).with_columns(group=pl.lit("ALL"), candidates=pl.lit("union (final k)")),
+        B.oracle_f05(final, q, truth, ["country"]).rename({"country": "group"}).with_columns(candidates=pl.lit("union (final k)")),
+        B.oracle_f05(c.filter(pl.col("p1_rank") <= 50), q, truth).with_columns(group=pl.lit("ALL"), candidates=pl.lit("P1 alone, k=50")),
+    ], how="diagonal").select("candidates", "group", "entities", "singleton_share", "oracle_macro_f05")
+    parts.append("## Oracle ceiling (perfect matcher on these candidates)\n\nMacro-F0.5 with precision 1 and "
+                 "recall = blocking recall per S1; singletons score 1 (nothing predicted); an S1 with no true "
+                 "match among its candidates scores 0.\n\n" + md(orc))
 
     st = B.cand_stats(final, queries["entity_id"])
     parts.append("## Candidates per S1 entity (final set)\n\n" + md(pl.DataFrame([st])))
@@ -212,8 +228,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--split", choices=config.SPLITS, required=True)
     ap.add_argument("--mode", choices=("dev", "full"), required=True)
-    ap.add_argument("--queries", default="train_ids", help="dev, train split: ID list to sample queries from")
+    ap.add_argument("--queries", default=None,
+                    help="ID list in data/splits (dev default: train_ids; full default: every S1 of the split), "
+                         "e.g. cand_train_200k, cand_val_50k")
     ap.add_argument("--n", type=int, default=config.BLOCK_DEV_QUERIES, help="dev: number of sampled queries")
+    ap.add_argument("--limit", type=int, default=0, help="full: only the first N queries (by entity_id), for timing")
+    ap.add_argument("--probe", action="store_true", help="full: time one shard, print the estimated run time, exit")
     ap.add_argument("--pool-experiment", action="store_true")
     ap.add_argument("--exact-check", type=int, default=0, metavar="N")
     ap.add_argument("--eval-only", action="store_true", help="dev: re-evaluate the saved dev candidates")
@@ -221,15 +241,14 @@ def main() -> int:
     memguard.start()
     if not config.CAND_DIR.exists():  # never create it silently on the internal disk
         sys.exit(f"{config.CAND_DIR} missing: symlink it to the T7 (Mac) or mkdir -p it (Colab); see BLOCKING.md")
-    st = B.stores(args.split)
     s1 = s1_frame(args.split)
 
     if args.mode == "dev":
-        pool_q = s1
-        if args.split == "train":
-            pool_q = s1.filter(pl.col("entity_id").is_in(data.load_split_ids(args.queries)))
+        st = B.stores(args.split)
+        qname = args.queries or "train_ids"
+        pool_q = s1.filter(pl.col("entity_id").is_in(data.load_split_ids(qname))) if args.split == "train" else s1
         queries = pool_q.sample(min(args.n, pool_q.height), seed=config.BLOCK_SEED)
-        tag = f"{args.split}_{args.queries if args.split == 'train' else 'all'}_n{queries.height}"
+        tag = f"{args.split}_{qname if args.split == 'train' else 'all'}_n{queries.height}"
         out = config.CAND_DIR / "dev" / f"{tag}_candidates.parquet"
         if args.eval_only:
             c = pl.read_parquet(out)
@@ -239,7 +258,7 @@ def main() -> int:
             c.write_parquet(out)
             B.log(f"wrote {out} ({c.height:,} rows)")
         if args.split == "train":
-            report = evaluate(c, queries, config.BLOCK_K, f"dev, {args.queries} sample")
+            report = evaluate(c, queries, config.BLOCK_K, f"dev, {qname} sample")
             if args.exact_check:
                 report += "\n" + exact_check(st, queries, args.exact_check) + "\n"
             if args.pool_experiment:
@@ -249,15 +268,28 @@ def main() -> int:
             print(report)
         return 0
 
-    # full: every S1 of the split, final k, written chunk by chunk
-    out = B.run_full(args.split, tsv=config.OUTPUT_DIR / "candidate_pairs.tsv" if args.split == "test" else None)
+    # full: final k, resumable chunks
+    queries = s1 if args.queries is None else s1.filter(pl.col("entity_id").is_in(data.load_split_ids(args.queries)))
+    name = args.split if args.queries is None else args.queries
+    if args.limit:
+        queries = queries.sort("entity_id").head(args.limit)
+        name = f"{name}_first{args.limit}"
+    if args.probe:
+        r = B.probe(args.split, queries)
+        print(json.dumps(r, indent=2))
+        return 0
+    t = time.time()
+    official = args.split == "test" and args.queries is None and not args.limit
+    out = B.run_candidates(args.split, queries, name, tsv=config.OUTPUT_DIR / "candidate_pairs.tsv" if official else None)
+    B.log(f"{name}: {queries.height:,} queries in {time.time() - t:.0f}s -> {out}")
     if args.split == "train":
-        val = s1.filter(pl.col("entity_id").is_in(data.load_split_ids("val_ids")))
-        c = pl.scan_parquet(out).filter(pl.col("s1_id").is_in(val["entity_id"].implode())).collect()
-        report = evaluate(c, val, config.BLOCK_K, "full, val_ids")
-        REPORTS.mkdir(exist_ok=True)
-        (REPORTS / "blocking_train_full_val_ids.md").write_text(report)
-        print(report)
+        val = queries.filter(pl.col("entity_id").is_in(data.load_split_ids("val_ids")))
+        if val.height:
+            c = pl.scan_parquet(out).filter(pl.col("s1_id").is_in(val["entity_id"].implode())).collect()
+            report = evaluate(c, val, config.BLOCK_K, f"full, {name}, its val_ids queries")
+            REPORTS.mkdir(exist_ok=True)
+            (REPORTS / f"blocking_{name}_val.md").write_text(report)
+            print(report)
     return 0
 
 

@@ -26,6 +26,18 @@ def test_recall_toy():
     assert B.recall(pl.concat([cands, cands]), truth)["pair_recall"][0] == pytest.approx(3 / 4)
 
 
+def test_oracle_f05_toy():
+    queries = pl.DataFrame({"s1_id": ["a", "b", "c", "d"], "country": ["US", "US", "India", "India"]})
+    truth = pl.DataFrame({"s1_id": ["a", "a", "b", "c"], "cand_id": ["x1", "x2", "y1", "z1"]})  # d: singleton
+    cands = pl.DataFrame({"s1_id": ["a", "b", "d"], "cand_id": ["x1", "y1", "w"]})               # c: nothing found
+    r = B.oracle_f05(cands, queries, truth).row(0, named=True)
+    f_a = 1.25 * 0.5 / (0.25 + 0.5)                     # recall 1/2, precision 1
+    assert r["oracle_macro_f05"] == pytest.approx((f_a + 1 + 0 + 1) / 4)
+    assert r["singleton_share"] == 0.25
+    by = {x["country"]: x["oracle_macro_f05"] for x in B.oracle_f05(cands, queries, truth, ["country"]).iter_rows(named=True)}
+    assert by["US"] == pytest.approx((f_a + 1) / 2) and by["India"] == pytest.approx(0.5)
+
+
 def test_cand_stats_counts_queries_without_candidates():
     s = B.cand_stats(pl.DataFrame({"s1_id": ["a", "a", "b"], "cand_id": ["1", "2", "3"]}), pl.Series(["a", "b", "c"]))
     assert (s["pairs"], s["max"], s["mean"]) == (3, 2, 1.0)
@@ -84,6 +96,7 @@ def test_candidate_tsv_one_row_per_s1_no_duplicates(tmp_path):
 def _toy_split(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CLEAN_DIR", tmp_path / "clean")
     monkeypatch.setattr(config, "CAND_DIR", tmp_path / "cand")
+    monkeypatch.setattr(config, "CAND_PERSIST_DIR", tmp_path / "cand")
     monkeypatch.setattr(config, "BLOCK_DF_CAP", 1.0)  # 12 documents: keep every n-gram
     (tmp_path / "clean").mkdir()
     (tmp_path / "cand").mkdir()
@@ -120,7 +133,7 @@ def test_toy_end_to_end_never_crosses_country(tmp_path, monkeypatch):
     for country in ("France", "India", "US"):
         qc = q.filter(q.is_in([e for e, c in country_of.items() if c == country]))
         fwd = B.forward(st, country, qc, {"p1": 5, "p2": 5})
-        p4 = B.reverse_all(st["p1"], country, 5)
+        p4 = B.p4_cached("toy", st["p1"], country).collect()
         u = B.union(country, fwd, p3.filter(pl.col("q_id").is_in(qc.implode())), p4)
         frames.append(B.fill_cosines(st, country, u.rename({"s1_id": "q_id"})).rename({"q_id": "s1_id"}))
     c = pl.concat(frames)
@@ -139,18 +152,49 @@ def test_toy_end_to_end_never_crosses_country(tmp_path, monkeypatch):
     assert c.select("s1_id", "cand_id").is_duplicated().sum() == 0
 
 
-def test_toy_full_mode_writes_parquet_and_valid_tsv(tmp_path, monkeypatch):
+def test_toy_full_mode_resumable_parquet_and_valid_tsv(tmp_path, monkeypatch):
     country_of = _toy_split(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "BLOCK_K", {"p1": 2, "p2": 2, "p4": 1})
     monkeypatch.setattr(config, "BLOCK_KMAX", {"p1": 5, "p2": 5, "p4": 2})
     monkeypatch.setattr(config, "BLOCK_QUERY_CHUNK", 1)   # several chunks -> several part files
+    queries = pl.read_parquet(config.clean_source_path("toy", 1), columns=["entity_id", "country"])
     tsv = tmp_path / "out" / "candidate_pairs.tsv"
-    out = B.run_full("toy", tsv=tsv)
+
+    # a first run that "disconnects" after the first chunk
+    calls = {"n": 0}
+    real = B.process_chunk
+
+    def flaky(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return real(*a, **kw)
+
+    monkeypatch.setattr(B, "process_chunk", flaky)
+    with pytest.raises(KeyboardInterrupt):
+        B.run_candidates("toy", queries, "toyrun", tsv=tsv)
+    parts = config.CAND_PERSIST_DIR / "toyrun.parts"
+    assert len(list(parts.glob("*.parquet"))) == 1 and not list(parts.glob("*.tmp"))
+
+    # the restart skips the finished chunk and completes the others
+    done = []
+    monkeypatch.setattr(B, "process_chunk", lambda *a, **kw: done.append(a[2]) or real(*a, **kw))
+    out = B.run_candidates("toy", queries, "toyrun", tsv=tsv)
+    assert len(done) == 2 and not parts.exists()
     c = pl.read_parquet(out)
-    assert not out.with_suffix(".parts").exists()
     assert c.select("s1_id", "cand_id").is_duplicated().sum() == 0
     assert all(country_of[a] == country_of[b] for a, b in c.select("s1_id", "cand_id").iter_rows())
     assert c["p1_rank"].drop_nulls().max() <= 2 and c["p1_rank_rev"].drop_nulls().max() <= 1
     rows = dict(line.split("\t") for line in tsv.read_text().splitlines()[1:])
     assert sorted(rows) == ["S1-a", "S1-b", "S1-c"]
     assert set(rows["S1-a"].split(",")) == set(c.filter(pl.col("s1_id") == "S1-a")["cand_id"])
+
+
+def test_resume_refuses_changed_settings(tmp_path, monkeypatch):
+    _toy_split(tmp_path, monkeypatch)
+    queries = pl.read_parquet(config.clean_source_path("toy", 1), columns=["entity_id", "country"])
+    parts = config.CAND_PERSIST_DIR / "x.parts"
+    parts.mkdir(parents=True)
+    (parts / "run.json").write_text('{"k": "something else"}')
+    with pytest.raises(RuntimeError, match="different settings"):
+        B.run_candidates("toy", queries, "x")
