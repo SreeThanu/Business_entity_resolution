@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-DEFAULT_LIMIT_GIB = 5.0
+DEFAULT_LIMIT_GIB = float(os.environ.get("BER_MEM_LIMIT_GIB", 5.0))
 
 
 def rss_gib(pid: int | None = None) -> float:

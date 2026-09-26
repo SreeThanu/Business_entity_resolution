@@ -1,12 +1,19 @@
 # Python 3.11.16 (conda env 'ber'). Generated with: pip freeze --exclude-editable
 iniconfig==2.3.0
+joblib==1.6.0
+llvmlite==0.49.0
+numba==0.67.0
 numpy==2.4.6
 packaging==26.3
 pandas==3.0.6
-polars==1.44.2
 pluggy==1.6.0
+polars==1.44.2
 pyarrow==25.0.1
 Pygments==2.21.0
 pytest==9.1.1
 python-dateutil==2.9.0.post0
+scikit-learn==1.9.1
+scipy==1.17.1
 six==1.17.0
+sparse-dot-topn==1.2.0
+threadpoolctl==3.7.0

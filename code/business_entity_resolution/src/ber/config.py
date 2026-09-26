@@ -56,3 +56,27 @@ def split_ids_path(name: str) -> Path:
 
 def clean_source_path(split: str, source: int) -> Path:
     return CLEAN_DIR / f"{split}_source{source}.parquet"
+
+
+# ---------------------------------------------------------------------------------------------
+# Blocking (src/ber/blocking.py, scripts/05_block.py). See BLOCKING.md for how these were chosen.
+# ---------------------------------------------------------------------------------------------
+
+CAND_DIR: Path = DATA_DIR / "cand"                 # candidates + vector cache (on the T7)
+BLOCK_N_FEATURES = 2 ** 24                         # hashed char_wb 3-5-gram space (as in the EDA)
+BLOCK_SHARD_ROWS = 500_000                         # rows per cached vector shard
+BLOCK_QUERY_CHUNK = 250_000                        # S1 queries processed together (memory bound)
+# Retrieval uses only n-grams whose document frequency is <= this fraction of the split's documents;
+# the retrieved set is then re-ranked by the exact cosine over all n-grams.
+BLOCK_DF_CAP = 0.005
+BLOCK_RETRIEVE_M = {"p1": 300, "p2": 300, "p4": 100}  # rows retrieved per query per shard before the exact re-rank
+BLOCK_KMAX = {"p1": 200, "p2": 100, "p4": 20}      # collected in --mode dev for the recall-vs-k curves
+BLOCK_K = {"p1": 50, "p2": 20, "p4": 10}           # used in --mode full (final candidate set)
+BLOCK_P4_MAX_PER_S1 = 100                          # P4 pairs kept per S1 (hub S1 records, see BLOCKING.md)
+BLOCK_P3_MAX_BLOCK = 20                            # P3 key blocks with more pool records are dropped
+BLOCK_DEV_QUERIES = 20_000                         # S1 queries sampled in --mode dev
+BLOCK_SEED = 0
+
+
+def cand_path(split: str) -> Path:
+    return CAND_DIR / f"{split}_candidates.parquet"

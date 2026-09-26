@@ -4,7 +4,7 @@ Match each source-1 business to its records in sources 2 and 3.
 
 Current status: data foundation and cleaning are done (parquet conversion, loaders, frozen splits,
 Stage 1-3 cleaning; see CLEANING.md, including the "Cleaned data contract" for downstream code).
-There is no blocking, feature or model code yet.
+Blocking / candidate generation is in place (BLOCKING.md). There is no feature or model code yet.
 
 ## Layout
 
@@ -13,6 +13,7 @@ ber/                                  project ROOT (git repo)
   data/parquet/                       scripts/01 output                  (symlink to external SSD)
   data/clean/                         scripts/03 + 05 output             (symlink to external SSD)
   data/dicts/                         learned Stage 2 table              (symlink to external SSD)
+  data/cand/                          candidates + vector cache (~21 GB) (symlink to external SSD)
   data/splits/                        frozen ID lists (gitignored); SPLITS.md, splits.sha256, log committed
   checksums/                          committed reference sha256 of the raw dataset + check log
   eda/                                EDA scripts + EDA_REPORT.md (ran on an old copy that is byte-identical to the fresh one)
@@ -28,6 +29,8 @@ ber/                                  project ROOT (git repo)
     scripts/03_clean.py               Stage 1 cleaning -> data/clean/{split}_source{n}.parquet
     scripts/04_eval_cleaning.py       Stage 3 evaluation -> reports/stage3_cleaning_eval.md
     scripts/05_learn_tables.py        Stage 2 state table -> data/dicts, data/clean/stage2_*
+    scripts/05_block.py               blocking -> data/cand/, output/candidate_pairs.tsv (run AFTER 05_learn_tables)
+    src/ber/blocking.py               the four blocking passes, vector cache, recall helpers
     src/ber/normalize.py, lexicon.py  Stage 1 rules and hand-written lists
     src/ber/lookup.py                 Stage 2 learning (train_ids only)
     src/ber/memguard.py               abort cleanly if RSS > 5 GiB
@@ -67,7 +70,11 @@ python scripts/03_clean.py                        # Stage 1, ~5 min for the 6 fi
 python scripts/05_learn_tables.py                 # Stage 2, ~15 s (needs Stage 1)
 python scripts/04_eval_cleaning.py                # Stage 3 report, ~1 min
 
-# 6. Tests (~2 min; the raw row-count tests skip with a message if the raw dataset is missing)
+# 6. Blocking (see BLOCKING.md). Mac: query samples; Colab: --mode full
+python scripts/05_block.py --split train --mode dev --queries train_ids   # first run ~1.5 h (builds caches)
+python scripts/05_block.py --split train --mode dev --queries val_ids     # ~10 min once caches exist
+
+# 7. Tests (~2 min; the raw row-count tests skip with a message if the raw dataset is missing)
 python -m pytest -q
 ```
 
