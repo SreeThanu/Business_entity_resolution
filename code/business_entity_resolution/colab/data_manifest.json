@@ -1,0 +1,154 @@
+{
+ "description": "Data needed by scripts/07-10 (Colab). Paths are relative to BER_DATA_DIR (Drive: the shared ber_data folder). Written by scripts/pack_for_drive.py.",
+ "created": "2026-09-27",
+ "files": 29,
+ "total_bytes": 7199922024,
+ "total_human": "6.71 GB",
+ "entries": [
+  {
+   "path": "clean/train_source1.parquet",
+   "bytes": 383889924,
+   "sha256": "9f524f38d307c1e3a3ac9decfea84dd36d4fd46ea3acfffdb7c2179162812a4c"
+  },
+  {
+   "path": "clean/train_source2.parquet",
+   "bytes": 895108559,
+   "sha256": "ff34b55e7bc1c0c536eb53e02d0422c97530f8eb8c1ab0a2858d0879b0e6c475"
+  },
+  {
+   "path": "clean/train_source3.parquet",
+   "bytes": 924465480,
+   "sha256": "448bf5f9155126cdb9fdfcf9cfa667571ad7aea1afa46315d7199954c69b0ca7"
+  },
+  {
+   "path": "clean/test_source1.parquet",
+   "bytes": 309370389,
+   "sha256": "5e95c5d8542b7225eb22d0ae097647de5557061eb4a75b184a4854c25db37f89"
+  },
+  {
+   "path": "clean/test_source2.parquet",
+   "bytes": 903561598,
+   "sha256": "c90d1a6c6f6edab18fb7fd7cfbe1852e35f2ef558c94cd8969780c63c81f0731"
+  },
+  {
+   "path": "clean/test_source3.parquet",
+   "bytes": 909025979,
+   "sha256": "6814ec39b56270c4df8d50099d81181a3766c3cad9175497a2b39fe79774f848"
+  },
+  {
+   "path": "clean/stage2_train_source1.parquet",
+   "bytes": 14315324,
+   "sha256": "fb2e2d8f8d5e4cdb42f68dbb2210206c9dcb3bea0eb64a4f75eb848b35753243"
+  },
+  {
+   "path": "clean/stage2_train_source2.parquet",
+   "bytes": 32820711,
+   "sha256": "4da598418cff763fe4123f2effa61d7d7f5509538cc153290affe7a9eb1b4d2c"
+  },
+  {
+   "path": "clean/stage2_train_source3.parquet",
+   "bytes": 34480496,
+   "sha256": "c1c48f175f7dab8148a845a0c259fc1d2d10a95f959927ac4106063381a42264"
+  },
+  {
+   "path": "clean/stage2_test_source1.parquet",
+   "bytes": 11237097,
+   "sha256": "d49217edae1fff0232b4be6a012f939601bb02f7cea9977064b4748601d15e18"
+  },
+  {
+   "path": "clean/stage2_test_source2.parquet",
+   "bytes": 31652871,
+   "sha256": "96e80b42c8d8e70c9094f30958cc849b76bcbbfbf0d3c659bf13afd567c67216"
+  },
+  {
+   "path": "clean/stage2_test_source3.parquet",
+   "bytes": 32952171,
+   "sha256": "bf277e504be8a88d5295faa886663441b83a9359e0cbed7598e8eb8b98f7d04b"
+  },
+  {
+   "path": "splits/SPLITS.md",
+   "bytes": 2944,
+   "sha256": "439ea53dde344b5f96bd11b3afe2774d1fb2020c5eab6efadfb2b5ee8ae48a8d"
+  },
+  {
+   "path": "splits/cand_train_200k.txt",
+   "bytes": 2577880,
+   "sha256": "dd73123a3840b76058f4404d97f1352fbc9ad4b3401f8a657e471167bbc52d6f"
+  },
+  {
+   "path": "splits/cand_val_50k.txt",
+   "bytes": 644499,
+   "sha256": "14f73d3611bf0b4c96ce463f90c4588194e20acbdd9e7dcd5853a408a49775e2"
+  },
+  {
+   "path": "splits/candidate_samples.sha256",
+   "bytes": 169,
+   "sha256": "e5e0f37dd095ae21ebcf5dba5d0e76b90c7498cdca9cffd45bd2248b500b83c8"
+  },
+  {
+   "path": "splits/fold_india_train.txt",
+   "bytes": 9111139,
+   "sha256": "4f41b7cb6a4dea746de9efd7b84ff3c8a2f14362084e8a56ab92504b515f3f15"
+  },
+  {
+   "path": "splits/fold_india_val.txt",
+   "bytes": 2272297,
+   "sha256": "ce5c6c46663599970ef508a268d8620ae129d9303a96a36f2b51017cb4c8687b"
+  },
+  {
+   "path": "splits/fold_us_train.txt",
+   "bytes": 13656628,
+   "sha256": "0c6205ef62278e31160c5633797c0379c6a8e3cbf8d33df2d4d487a1b1e1ca53"
+  },
+  {
+   "path": "splits/fold_us_val.txt",
+   "bytes": 3403443,
+   "sha256": "c266c8083ee3907c5728a1362593d59a9f3876ab4b94ac74170dc409b9d8fd0a"
+  },
+  {
+   "path": "splits/make_splits.log",
+   "bytes": 738,
+   "sha256": "0224b0b437a6f5e2bfdbf5a95f416b9d11fe9422f77611ae6a67f9689bac7290"
+  },
+  {
+   "path": "splits/splits.sha256",
+   "bytes": 496,
+   "sha256": "c2d2f84b6b65363faee8eafa2e43cdb661550b81bbc95b19d49b3fb90f1458b1"
+  },
+  {
+   "path": "splits/train_ids.txt",
+   "bytes": 22767767,
+   "sha256": "97cccdfaf3d97eefacc37dc7130723373473c89fcfabbcdfed8263d1990b5b07"
+  },
+  {
+   "path": "splits/val_ids.txt",
+   "bytes": 5675740,
+   "sha256": "245925ee38854d0323c42d13167375a6477f5499adb574b2e863af0ed99c340c"
+  },
+  {
+   "path": "dicts/state_map.parquet",
+   "bytes": 4234,
+   "sha256": "39e76d82b2462f5a9bd7183f924eb21b540eb2bf336ba350fc606ad6a4c9718c"
+  },
+  {
+   "path": "cand/cand_train_200k_candidates.parquet",
+   "bytes": 245810639,
+   "sha256": "b22591c83b907d656e3e3d80bf3b743c58cd54fa8a91b8d7e243e961d67c4ffb"
+  },
+  {
+   "path": "cand/cand_val_50k_candidates.parquet",
+   "bytes": 57863591,
+   "sha256": "812e49e0236a56d8103f08647708fc3578a1dcc64900b7b9b71bc33a0d770b58"
+  },
+  {
+   "path": "cand/test_candidates.parquet",
+   "bytes": 2292206586,
+   "sha256": "3474a1e8f0d037225f253dc05d96c95911baa574d5b5b739744d5c7890007b58"
+  },
+  {
+   "path": "parquet/train_ground_truth_long.parquet",
+   "bytes": 61042635,
+   "sha256": "7cc0ed652803800203363ee1afdca4e15417ed1b75936558d0c6f994d82440e3"
+  }
+ ]
+}

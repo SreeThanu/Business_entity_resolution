@@ -40,6 +40,7 @@ from sparse_dot_topn import sp_matmul_topn
 
 from ber import config
 from ber.normalize import NORMALIZE_VERSION
+from ber.submission import validate_candidate_tsv, write_candidate_tsv  # noqa: F401 (re-exported)
 
 N_THREADS = os.cpu_count() or 2
 _HV = HashingVectorizer(analyzer="char_wb", ngram_range=(3, 5), lowercase=False,
@@ -118,7 +119,7 @@ class VectorStore:
         if not self.dir.parents[2].exists():
             raise FileNotFoundError(
                 f"{self.dir.parents[2]} does not exist. On the Mac it must be a symlink to the external SSD "
-                "(ln -s '/Volumes/thanu's T7/Business_entity_resolution/ber_data/cand' data/cand); on Colab: mkdir -p data/cand")
+                "(ln -s <external disk>/ber_data/cand data/cand); on Colab: mkdir -p data/cand")
         self.dir.mkdir(parents=True, exist_ok=True)
         df = np.zeros(config.BLOCK_N_FEATURES, dtype=np.int32)
         shards, n_docs, t = [], 0, time.time()
@@ -358,7 +359,7 @@ def p3_pairs(split: str, s1_ids: pl.Series, max_block: int = config.BLOCK_P3_MAX
     """Pairs (q_id, cand_id) sharing a P3 key, same country. Keys with more than `max_block` pool
     records are dropped (reported in the stats)."""
     def state(s: int) -> pl.LazyFrame:
-        p = config.CLEAN_DIR / f"stage2_{split}_source{s}.parquet"
+        p = config.stage2_source_path(split, s)
         return pl.scan_parquet(p).select("entity_id", "addr_state_canon")
 
     q = p3_keys(pl.scan_parquet(config.clean_source_path(split, 1)).filter(pl.col("entity_id").is_in(s1_ids.implode())),
@@ -726,31 +727,3 @@ def cand_stats(cands: pl.DataFrame, queries: pl.Series) -> dict:
            .with_columns(pl.col("n").fill_null(0)))["n"]
     return {"queries": len(queries), "pairs": int(per.sum()), "mean": float(per.mean()),
             "p50": float(per.quantile(0.5)), "p95": float(per.quantile(0.95)), "max": int(per.max())}
-
-
-# ---------------------------------------------------------------------------------------------
-# Submission file
-# ---------------------------------------------------------------------------------------------
-
-def write_candidate_tsv(cands: pl.DataFrame | pl.LazyFrame, s1_ids: pl.Series, path: Path) -> None:
-    """Official candidate_pairs.tsv: one row per S1 (all of `s1_ids`), comma-separated unique
-    S2/S3 ids, empty when none."""
-    lists = (cands.lazy().select("s1_id", "cand_id").unique()
-             .group_by("s1_id").agg(pl.col("cand_id").sort().str.join(",").alias("candidate_entity_ids"))
-             .collect(engine="streaming"))
-    out = (pl.DataFrame({"s1_id": s1_ids}).unique(maintain_order=True).join(lists, on="s1_id", how="left")
-           .select(pl.col("s1_id").alias("source1_entity_id"), pl.col("candidate_entity_ids").fill_null("")))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    out.write_csv(path, separator="\t", quote_style="never")
-
-
-def validate_candidate_tsv(path: Path, required: set[str]) -> list[str]:
-    """Run the official validator's rules (utils/validate_submission.py) on a candidate file."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "validate_submission", Path(__file__).resolve().parents[2] / "utils" / "validate_submission.py")
-    v = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(v)
-    errors: list[str] = []
-    v.validate_id_list_file(str(path), v.CANDIDATE_HEADER, "candidate_entity_ids", required, None, errors)
-    return errors

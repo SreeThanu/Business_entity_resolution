@@ -1,8 +1,15 @@
 """All project paths, relative to a single ROOT.
 
 ROOT is the project root (the directory holding code/, data_raw/, data/, output/).
-It defaults to four levels above this file and can be overridden with the BER_ROOT
-environment variable. Nothing else in the codebase should build paths by hand.
+It defaults to four levels above this file. Every location can be moved with an environment
+variable; the defaults are the Mac layout. Nothing else in the codebase should build paths by hand.
+
+    BER_ROOT             project root                                  default: four levels above this file
+    BER_DATA_DIR         local working copy of the data (fast disk)    default: ROOT/data
+    BER_PERSIST_DIR      checkpoints + artifacts that must survive a   default: ROOT/artifacts
+                         Colab disconnect (Google Drive on Colab)
+    BER_OUTPUT_DIR       submission files                              default: ROOT/output
+    BER_RAW_DATASET_DIR  the official dataset/ folder (train/, test/)  default: ROOT/data_raw/dataset
 """
 
 from __future__ import annotations
@@ -12,14 +19,14 @@ from pathlib import Path
 
 ROOT: Path = Path(os.environ.get("BER_ROOT", Path(__file__).resolve().parents[4])).resolve()
 
-# Raw, untouched copy of the official download (never modified). It lives on the external SSD;
-# override with BER_RAW_DATASET_DIR (the folder holding train/ and test/ TSVs).
-RAW_DATASET_DIR: Path = Path(os.environ.get(
-    "BER_RAW_DATASET_DIR", "/Volumes/thanu's T7/Business_entity_resolution/student_resource/dataset"))
+# Raw, untouched copy of the official download (never modified): the folder holding train/ and
+# test/ TSVs. On the Mac, data_raw is a symlink to the official student_resource/ folder on the
+# external SSD; elsewhere set BER_RAW_DATASET_DIR.
+RAW_DATASET_DIR: Path = Path(os.environ.get("BER_RAW_DATASET_DIR", ROOT / "data_raw" / "dataset"))
 CHECKSUM_DIR: Path = ROOT / "checksums"
 
 # Derived data.
-DATA_DIR: Path = ROOT / "data"
+DATA_DIR: Path = Path(os.environ.get("BER_DATA_DIR", ROOT / "data"))
 PARQUET_DIR: Path = DATA_DIR / "parquet"
 SPLITS_DIR: Path = DATA_DIR / "splits"
 
@@ -28,7 +35,13 @@ CLEAN_DIR: Path = DATA_DIR / "clean"
 DICTS_DIR: Path = DATA_DIR / "dicts"
 
 # Submission artefacts.
-OUTPUT_DIR: Path = ROOT / "output"
+OUTPUT_DIR: Path = Path(os.environ.get("BER_OUTPUT_DIR", ROOT / "output"))
+
+# Checkpoints and artifacts (feature chunks, models, prediction chunks). On Colab: Google Drive.
+PERSIST_DIR: Path = Path(os.environ.get("BER_PERSIST_DIR", ROOT / "artifacts"))
+FEATURES_DIR: Path = PERSIST_DIR / "features"
+MODELS_DIR: Path = PERSIST_DIR / "models"
+PREDS_DIR: Path = PERSIST_DIR / "preds"
 
 SPLITS = ("train", "test")
 SOURCES = (1, 2, 3)
@@ -58,6 +71,10 @@ def clean_source_path(split: str, source: int) -> Path:
     return CLEAN_DIR / f"{split}_source{source}.parquet"
 
 
+def stage2_source_path(split: str, source: int) -> Path:
+    return CLEAN_DIR / f"stage2_{split}_source{source}.parquet"
+
+
 # ---------------------------------------------------------------------------------------------
 # Blocking (src/ber/blocking.py, scripts/06_block.py). See BLOCKING.md for how these were chosen.
 # ---------------------------------------------------------------------------------------------
@@ -81,3 +98,17 @@ BLOCK_P3_MAX_BLOCK = 20                            # P3 key blocks with more poo
 BLOCK_DEV_QUERIES = 20_000                         # S1 queries sampled in --mode dev
 BLOCK_SEED = 0
 
+
+
+def cand_path(name: str) -> Path:
+    return CAND_DIR / f"{name}_candidates.parquet"
+
+
+# ---------------------------------------------------------------------------------------------
+# Features, model, decision rule (scripts/07-10)
+# ---------------------------------------------------------------------------------------------
+
+# Feature split -> (candidate file name, entity split whose data/clean files the pairs join to).
+FEATURE_SPLITS = {"train": ("cand_train_200k", "train"), "val": ("cand_val_50k", "train"), "test": ("test", "test")}
+FEATURE_CHUNK_S1 = int(os.environ.get("BER_FEATURE_CHUNK_S1", 20_000))  # S1 per feature chunk (~1.8M pairs)
+THRESHOLD_GRID = [round(0.02 * i, 2) for i in range(5, 50)]               # 0.10 .. 0.98

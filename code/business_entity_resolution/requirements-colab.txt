@@ -1,0 +1,14 @@
+# Colab requirements for scripts/07-10 (features, training, evaluation, prediction) and the data
+# copy step. Checked against the Colab runtime 2026.07: Python 3.12.13, numpy 2.0.2 preinstalled.
+#
+# Only what 07-10 need. Not here on purpose:
+#   - numpy, pandas, scipy, pyarrow: preinstalled on Colab; pinning them would fight its stack.
+#     (lightgbm needs numpy + scipy, ber.data imports pandas; the preinstalled versions work.)
+#   - blocking-only packages (scikit-learn, numba, sparse-dot-topn): 06_block.py is not part of this
+#     flow; for blocking use requirements.txt.
+#
+# Install: pip install -q -r requirements-colab.txt && pip install -q --no-deps -e .
+polars==1.44.2
+rapidfuzz==3.14.6
+lightgbm==4.7.0
+pyarrow>=16

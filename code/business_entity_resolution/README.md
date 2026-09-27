@@ -4,7 +4,8 @@ Match each source-1 business to its records in sources 2 and 3.
 
 Current status: data foundation and cleaning are done (parquet conversion, loaders, frozen splits,
 Stage 1-3 cleaning; see CLEANING.md, including the "Cleaned data contract" for downstream code).
-Blocking / candidate generation is in place (BLOCKING.md). There is no feature or model code yet.
+Blocking / candidate generation is in place (BLOCKING.md). Features, training, evaluation and test
+prediction (scripts 07-10) exist as a **v0 baseline** that runs end to end on Colab (COLAB.md).
 
 ## Layout
 
@@ -15,12 +16,14 @@ ber/                                  project ROOT (git repo)
   data/dicts/                         learned Stage 2 table              (symlink to external SSD)
   data/cand/                          candidates + vector cache (~21 GB) (symlink to external SSD)
   data/splits/                        frozen ID lists (gitignored); SPLITS.md, splits.sha256, log committed
+  data_raw/                           symlink to the official student_resource/ folder (gitignored)
+  artifacts/                          BER_PERSIST_DIR default: feature chunks, models, predictions (gitignored)
   checksums/                          committed reference sha256 of the raw dataset + check log
   eda/                                EDA scripts + EDA_REPORT.md (ran on an old copy that is byte-identical to the fresh one)
   output/                             matching_results.tsv, candidate_pairs.tsv
   Documentation_template.md
   code/business_entity_resolution/
-    src/ber/config.py                 every path, relative to ROOT (override with BER_ROOT)
+    src/ber/config.py                 every path; env vars BER_ROOT, BER_DATA_DIR, BER_PERSIST_DIR, BER_OUTPUT_DIR
     src/ber/data.py                   the ONLY way to load data
     src/ber/splits.py                 md5-based split rule
     scripts/00_check_raw.py           checksums + TSV field/UTF-8/row-count checks
@@ -30,6 +33,17 @@ ber/                                  project ROOT (git repo)
     scripts/04_eval_cleaning.py       Stage 3 evaluation -> reports/stage3_cleaning_eval.md
     scripts/05_learn_tables.py        Stage 2 state table -> data/dicts, data/clean/stage2_*
     scripts/06_block.py               blocking -> data/cand/, output/candidate_pairs.tsv
+    scripts/07_features.py            pair features (v0 baseline), chunked + resumable -> artifacts/features/
+    scripts/08_train.py               LightGBM -> artifacts/models/<timestamp>_<commit>/
+    scripts/09_evaluate.py            decision rule + threshold (macro-F0.5), cross-country check
+    scripts/10_predict.py             test inference -> output/matching_results.tsv, validated
+    scripts/pack_for_drive.py         data manifest for Colab (colab/data_manifest.json)
+    scripts/fetch_data.py             Colab: copy data from Drive + verify checksums
+    scripts/smoke_colab_flow.sh       07-10 on a tiny sample, all outputs in a temp folder
+    colab/run_pipeline.ipynb          the Colab notebook (COLAB.md)
+    src/ber/features.py               v0 pair features
+    src/ber/decision.py               one-to-one + threshold decision rule, official macro-F0.5
+    src/ber/submission.py             writes + validates the two submission TSVs
     src/ber/blocking.py               the four blocking passes, vector cache, recall helpers
     src/ber/normalize.py, lexicon.py  Stage 1 rules and hand-written lists
     src/ber/lookup.py                 Stage 2 learning (train_ids only)
@@ -52,8 +66,8 @@ pip install -r requirements.txt
 pip install -e .
 
 # 2. Raw data: the official dataset/ folder (train/{train_source1,2,3,train_ground_truth}.tsv,
-#    test/test_source{1,2,3}.tsv). Default location (src/ber/config.py):
-#      "/Volumes/thanu's T7/Business_entity_resolution/student_resource/dataset"
+#    test/test_source{1,2,3}.tsv). Default location (src/ber/config.py): ROOT/data_raw/dataset,
+#    so on the Mac symlink the official folder once:  ln -s <external disk>/student_resource data_raw
 #    Elsewhere: export BER_RAW_DATASET_DIR=/path/to/dataset
 #    Verify it against checksums/fresh_dataset.sha256 (prints "checksums OK" and "format OK").
 python scripts/00_check_raw.py --verify           # ~15 s, writes nothing
@@ -78,7 +92,14 @@ python scripts/06_block.py --split train --mode full --queries cand_train_200k  
 python scripts/06_block.py --split train --mode full --queries cand_val_50k      # model validation candidates
 python scripts/06_block.py --split test  --mode full --probe              # time estimate (then run on Colab)
 
-# 7. Tests (~2 min; the raw row-count tests skip with a message if the raw dataset is missing)
+# 7. Features, model, submission (v0 baseline; normally on Colab, see COLAB.md)
+python scripts/07_features.py --split train      # also --split val, --split test
+python scripts/08_train.py
+python scripts/09_evaluate.py
+python scripts/10_predict.py
+bash scripts/smoke_colab_flow.sh                 # the same four stages on a tiny sample (~1 min)
+
+# 8. Tests (~2 min; the raw row-count tests skip with a message if the raw dataset is missing)
 python -m pytest -q
 ```
 

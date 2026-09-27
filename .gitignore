@@ -1,5 +1,5 @@
 # Raw and derived data (never committed)
-data_raw/
+data_raw
 data/*
 !data/splits/
 data/splits/*
@@ -31,3 +31,4 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 .DS_Store
+artifacts/
